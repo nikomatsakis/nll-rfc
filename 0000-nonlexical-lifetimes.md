@@ -1211,7 +1211,7 @@ error[E0506]: cannot write to `x` while borrowed
  --> <anon>:4:5
    |
  3 |     x.push(x.pop().unwrap());
-   |     - ^^^^ ^^^^^^^^^^^^^^^^
+   |     - ---- ^^^^^^^^^^^^^^^^
    |     | |    write to `x` occurs here, while borrow is still in active use
    |     | borrow is later used here, during the call
    |     `x` borrowed here
@@ -1225,7 +1225,7 @@ error[E0506]: cannot assign to `x` because it is borrowed
  --> <anon>:4:5
    |
  3 |     Vec::push(&mut x, x.pop().unwrap());
-   |     ^^^^^^^^^ ------  ----------------
+   |     --------- ------  ^^^^^^^^^^^^^^^^
    |     |         |       write to `x` occurs here, while borrow is still in active use
    |     |         `x` borrowed here
    |     borrow is later used here, during the call
