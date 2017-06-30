@@ -1156,7 +1156,7 @@ Another example, this time using a `match`:
 
 ```rust
 fn main() {
-    let x = Some(3);
+    let mut x = Some(3);
     match &mut x {
         Some(i) => {
             x = None;
