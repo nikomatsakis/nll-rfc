@@ -10,7 +10,12 @@ Extend Rust's borrow system to support **non-lexical lifetimes** --
 these are lifetimes that are based on the control-flow graph, rather
 than lexical scopes. The RFC describes in detail how to infer these
 new, more flexible regions, and also describes how to adjust our error
-messages.
+messages. The RFC also describes a few other extensions to the borrow
+checker, the total effect of which is to eliminate many common cases
+where small, function-local requires would be required to pass the
+borrow check. (The "Future Work" section describes some of the
+remaining borrow-checker limitations that are not addressed by this
+RFC.)
 
 # Motivation
 [motivation]: #motivation
@@ -328,6 +333,91 @@ checker, even if in practice using the `entry` API would be
 preferable. (Interestingly, the limitation of the borrow checker here
 was one of the motivations for developing the `entry` API in the first
 place!)
+
+## Problem case #4: mutating `&mut` references
+
+The current borrow checker forbids reassigning an `&mut` variable `x`
+when the referent (`*x`) has been borrowed. This most commonly arises
+when writing a loop that progressively "walks down" a data structure.
+Consider this function, which converts a simple linked list `&mut List<T>`
+into a `Vec<&mut T>`:
+
+```rust
+struct List<T> {
+    value: T,
+    next: Option<Box<List<T>>>
+}b
+
+fn to_refs<T>(mut list: &mut List<T>) -> Vec<&mut T> {
+    let mut result = vec![];
+    loop {
+        result.push(&mut list.value);
+        if let Some(n) = list.next.as_mut() {
+            list = &mut n;
+        } else {
+            return result;
+        }
+    }
+}
+```
+
+If we attempt to compile this, we get an error (actually, we get
+multiple errors):
+
+```
+error[E0506]: cannot assign to `list` because it is borrowed
+  --> /Users/nmatsakis/tmp/x.rs:11:13
+   |
+9  |         result.push(&mut list.value);
+   |                          ---------- borrow of `list` occurs here
+10 |         if let Some(n) = list.next.as_mut() {
+11 |             list = n;
+   |             ^^^^^^^^ assignment to borrowed `list` occurs here
+```
+
+Specifically, what's gone wrong is that we borrowed `list.value` (or,
+more explicitly, `(*list).value`). The current borrow checker enforces
+the rule that when you borrow a path, you cannot assign to that path
+or any prefix of that path. In this case, that means you cannot assign to any
+of the following:
+
+- `(*list).value`
+- `*list`
+- `list`
+
+As a result, the `list = n` assignment is forbidden. These rules make
+sense in some cases (for example, if `list` were of type `List<T>`,
+and not `&mut List<T>`, then overwriting `list` would also overwrite
+`list.value`), but not in the case where we cross a mutable reference.
+
+As described in [Issue #10520][10520], there exist various workarounds
+for this problem. One trick is to move the `&mut` reference into a
+temporary variable that you won't have to modify:
+
+```rust
+fn to_refs<T>(mut list: &mut List<T>) -> Vec<&mut T> {
+    let mut result = vec![];
+    loop {
+        let list1 = list;
+        result.push(&mut list1.value);
+        if let Some(n) = list1.next.as_mut() {
+            list = &mut n;
+        } else {
+            return result;
+        }
+    }
+}
+```
+
+When you frame the program this way, the borrow checker sees that
+`(*list1).value` is borrowed (not `list`). This does not prevent us
+from later assigning to `list`. 
+
+Clearly this workaround is annoying. The problem here, it turns out,
+is not specific to non-lexical lifetimes per se. Rather, it is that
+the rules which the borrow checker enforces when a path is borrowed
+are too strict and do not account for the indirection inherent in a
+borrowed reference. This RFC proposes a tweak to address that.
 
 ## The rough outline of our solution
 
@@ -1050,14 +1140,252 @@ along the way, we'd like to fix two shortcomings of the borrow checker:
 
 **First, support nested method calls like `vec.push(vec.len())`.**
 Here, the plan is to continue with the `mut2` borrow solution proposed
-in [RFC 2025]. This RFC does not (yet) propose one of the more
-"comprehensive" solutions described in RFC 2025, such as "borrowing
-for the future" or `Ref2`. The reasons why are discussed in the
-Alternatives section.
+in [RFC 2025]. This RFC does not (yet) propose one of the type-based
+solutions described in RFC 2025, such as "borrowing for the future" or
+`Ref2`. The reasons why are discussed in the Alternatives section.
 
-- **Second, permit variables containing mutable references to be modified,
-  even if their referent is borrowed.**
+**Second, permit variables containing mutable references to be
+modified, even if their referent is borrowed.** This refers to the
+"Problem Case #4" described in the introduction; we wish to accept the
+original program.
+
+### Brief overview: MIR
+
+The borrow checker here is defined over the (unoptimized,
+non-drop-elaborated) MIr of the source program. This RFC does not
+attempt to define MIR in detail, but there are a few points worth
+covering. First, the term **lvalue** in MIR has a very specific
+meaning. An lvalue `lv` is defined by the following grammar:
+
+```
+LV = x               // a local variable, temporary
+   | static          // a static 
+   | LV PROJ         // a "projection" from LV
+PROJ = F             // field access
+     | *             // dereference
+     | [I]           // built-in indexing (i.e., for a `[T; n]` or `[T]` type);
+                     // the index I might be another value, or in some cases
+                     // a kind of constant (specifically when desugaring slice
+                     // patterns)
+     | as Variant    // downcasting, used when desugaring matches
+   | *LV             // deref of a reference
+   | LV.F            // interior field access
+   | LV[I]           // built-in indexing (i.e., for a `[T; n]` or `[T]` type);
+                     // the index I might be another value, or in some cases
+                     // a kind of constant (specifically when desugaring slice
+                     // patterns)
+   | (LV as Variant) // downcasting, used when desugaring matches
+```  
+
+### Borrow checker phase 1: computing loans in scope
+
+The first phase of the borrow checker is computing, at each point in
+the CFG, the set of in-scope **loans**. A "loan" is represented as a tuple
+`('a, shared|uniq|mut, lvalue)` indicating:
+
+1. the lifetime `'a` for which the value was borrowed;
+2. whether this was a shared, unique, or mutable loan;
+    - "unique" loans are exactly like mutable loans, but they do not permit
+      mutation of their referents. They are used only in closure desugarings
+      and are not part of the Rust's surface syntax.
+3. the lvalue that was borrowed (e.g., `x` or `(*x).foo`).
+
+The set of in-scope loans at each point is found via a fixed-point
+dataflow computation. We create a loan tuple from each borrow rvalue
+in the MIR (that is, every assignment statement like `tmp = &'a
+b.c.d`), giving each tuple a unique index `i`. We can then represent
+the set of loans that are in scope at a particular point using a
+bit-set and do a standard forward data-flow propagation.
+
+We must however compute the "gen" and "kill" sets for these loans at
+every point. Given some borrow statement occuring at the point P with
+index `i` and lifetime `'a`:
+
+- The gen set of P is `{i}`, since that point brings the loan into
+  scope.
+- Do a depth-first search from P, stopping when we exit the lifetime
+  `'a`. Add `i` to the kill set for each node Q where we exit,
+  indicating that -- upon entry to Q -- the borrow is no longer
+  in-scope, as its lifetime has expired.
   
+Finally, for each assignment `lv = <rvalue>` in the MIR, we may able
+to add additional kill bits. Specifically, we are looking for cases
+like the one in Problem Case #4:
+
+```rust
+let list: &mut List<T> = ...;
+let v = &mut (*list).value;
+list = ...;
+```
+
+At the point of assignment, the loan of `(*list).value` is in-scope,
+but it does not have to be considered in-scope afterwards. This is
+because the variable `list` now holds a fresh value, and that new
+value has not yet been borrowed (or else we could not have produced
+it). Specifically, whenever we see an assignment `lv = <rvalue>` in
+MIR, we can clear all loans where the borrowed path `lv_loan` has `lv`
+as a prefix. (In our example, the assignment is to `list`, and the
+loan path `(*list).value` has `list` as a prefix.)
+
+**NB.** In this phase, when there is an assignment, we always clear
+all loans that applied to the overwritten path; however, in some cases
+the **assignment itself** may be illegal due to those very loans. In
+our example, this would be the case if the type of `list` had been
+`List<T>` and not `&mut List<T>`.  In such cases, errors will be
+reported by the next portion of the borrowck, described in the next
+section.
+
+### Borrow checker phase 2: reporting errors
+
+At this point, we have computed which loans are in scope at each
+point. Next, we traverse the MIR and identify actions that are illegal
+given the loans in scope. The following sorts of MIR actions may be
+illegal in the presence of an applicable loan.
+
+**Accesses.** 
+
+**Mutable borrows.**
+
+**Upgrades.**
+
+**Moves.** Moves of an lvalue that is borrowed.
+
+**StorageDead.** StorageDead statements are invalid if they affect a
+path which is borrowed. (XXXX)
+
+**Assignments.** An assignment `lv = <rvalue>` is illegal if there is
+a loan (of any kind) of some path `lv2` and `lv2 invalidated-by lv`
+holds. 
+
+Scenarios:
+
+- write to W, while B borrowed
+- struct.a, struct.x -- OK
+- struct.a.b, struct.x -- OK
+- struct.x, struct.x.y -- ERROR
+- struct.x.y, struct.x -- ERROR
+- union.a.b, union.x -- ERROR
+- ref, (*ref).f -- OK
+- (*ref.f), ref -- ERROR if ref mutably borrowed, but how/why? Maybe through a different path.
+
+
+`invalidated-by` is a very simple judgement defined as follows
+(using a Prolog-esque notation):
+
+```
+LV invalidated-by LV.
+
+LV.f invalidated-by LV.
+
+LV.f invalidated-by LV.g :- typeof(LV) is a union.
+
+*LV invalidated-by LV :- typeof(LV) is not `&` or `&mut`.
+
+LV[_] invalidated-by LV.
+
+(LV as Variant) invalidated-by LV.
+```
+
+```
+// Local variables are independent slots,
+// as are statics.
+x does-not-affect y :- x != y.
+static1 does-not-affect static2 :- static1 != static2.
+static does-not-effect x.
+
+LV.f does-not-affect LV.g :- f != g, LV is not a union.
+
+LV[I] does-not-affect LV[J] :- I and J are distinct indices.
+
+(LV as Variant1) does-not-affect (LV as Variant2) :- Variant1 != Variant2.
+
+LV does-not-affect *LV :- LV is a reference.
+
+LV1.f does-not-affect LV2.g :- LV1 does-not-affect LV2.g.
+```
+
+```
+LV partly-clobbers LV.
+
+LV.f partly-clobbers LV.
+
+*LV 
+
+LV[_] invalidated-by LV.
+
+(LV as Variant) invalidated-by LV.
+
+
+
+
+// MIR local variables are each independent slots.
+x not-overwrites y :-
+    x != y.
+
+// Local variables are disjoint from statics.
+x disjoint static.
+
+// Overwriting LV1 can't affect some part of LV2
+// if it does not affect ANY of LV2.
+LV1 not-overwrites (LV2 PROJ) :-
+  LV1 not-overwrites LV2.
+
+// Overwriting one projection from an LV may 
+// not affect other projections, but that dependents
+// on the projections.
+LV PROJ1 not-overwrites LV PROJ2 :-
+  PROJ1 not-overwrites PROJ2.
+  
+// Writing a new value into 
+LV not-overwrites *LV :-
+  typeof(LV) is `&` or `&mut`
+  
+F disjoint G :-
+  F and G are both fields declared in a struct or enum variant.
+
+(as Variant1) disjoint (as Variant2) :-
+  Variant1 != Variant2.
+  
+```
+
+where overwriting `lv` would
+overwrite `lv2`. The following judgement `lv overwrites lv2` describes
+those cases (this is Prolog notation).
+
+```
+// Overwrites is transitive.
+LV overwrites LV2 :-
+  LV overwrites LV1,
+  LV1 overrites LV2.
+  
+LV overwrites LV.
+
+LV overwrites LV.F.
+
+LV.F overwrites LV.G :-
+  typeof(LV) is a union.
+
+LV overwrites LV[I].
+
+LV overwrites (LV as Variant).
+
+LV overwrites *LV :-
+  LV: Box<T>. // the borrow checker still has some built-in treatment of Box<T>
+```
+
+To see how these rules work, let us consider two examples. The first
+is our simplified variant of Problem Case #4:
+
+```rust
+let list: &mut List<T> = ...;
+let v = &mut (*list).value;
+list = ...;
+```
+
+In this case, the assignment to `list` is permitted
+With respect to Problem Case #4, the important point here is that `LV
+overwrites *LV` is not true if `LV` is a reference, which means that 
+
 # How We Teach This
 [how-we-teach-this]: #how-we-teach-this
 
@@ -1322,6 +1650,61 @@ lifetimes to lexical scoping is confusing and surprising.
 During the runup to this RFC, a number of alternate schemes and
 approaches to describing NLL were tried and discarded.
 
+**RFC 396.** [RFC 396][] defined lifetimes to be a "prefix" of the
+dominator tree -- roughly speaking, a single-entry, multiple-exit
+region of the control-flow graph. Unlike our system, this definition
+did not permit gaps or holes in a lifetime. Ensuring continuous was
+meant to guarantee soundness; in this RFC, we use the liveness
+constraints to achieve a similar effect. This more flexible setup
+allows us to handle cases like Problem Case #3, which RFC 396 would
+not have accepted. RFC 396 also did not cover dropck and a number of
+other complications.
+
+**SSA or SSI transformation.** Rather than incorporating the "current location" into
+the subtype check, we also considered formulations that first applied
+an SSA transformation to the input program, and then gave each of those
+variables a distinct type. This does allow some examples to type-check that
+wouldn't otherwise, but it is not flexible enough for the `vec-push-ref`
+example covered earlier.
+
+Using SSA also introduces other complications. Among other things,
+Rust permits variables and temporaries to be borrowed and mutated
+indirectly (e.g., via `&mut`).  If we were to apply SSA to MIR in a
+naive fashion, then, it would ignore these assignments when creating
+numberings. For example:
+
+```
+let mut x = 1;      // x0, has value 1
+let mut p = &mut x; // p0
+*p += 1;
+use(x);             // uses `x0`, but it now has value 2
+```
+
+Here, the value of `x0` changed due to a write from `p`. Thus this is
+not a true SSA form. Normally, SSA transformations achieve this by
+making local variables like `x` and `p` be pointers into stack slots,
+and then lifting those stack slots into locals when safe. MIR was
+intentionally not done using SSA form precisely to avoid the need for
+such contortions (we can leave that to the optimizing backend).
+
+**Type per program point.** Going further than SSA, one can
+accommodate `vec-push-ref` through a scheme that gives each variable a
+distinct type at each point in the CFG (similar to what Ericson2314
+describes in the [stateful MIR for Rust][smr]) and applies
+transformations to the lifetimes on every edge. During the rustc
+design sprint, the compiler team also enumerated such a design. The
+author believes this RFC to be a roughly equivalent analysis, but with
+an alternative, more familiar formulation that still uses one type per
+variable (rather than one type per variable per point).
+
+There are several advantages to the design enumerated here. For one
+thing, it involves far fewer inference variables (if each variable has
+many types, each of those types needs distinct inference variables at
+each point) and far fewer constraints (we don't need constraints just
+for connecting the type of a variable between distinct points). It is
+also a more natural fit for the surface language, in which variables
+have a single type.
+
 ### Different "lifetime modes"
 
 In the discussion about nested method calls ([RFC 2025]), there were
@@ -1336,7 +1719,10 @@ Vec::push(tmp0, tmp1);
 This is because code like that would be the naive desugaring of
 `vec.push(vec.len())`. RFC 2025 proposed instead an alternative
 desugaring for `vec.push(vec.len())` which allowed us to accept such
-borrows when in method-call form (but not otherwise).
+borrows when in method-call form (but not otherwise). This works by
+using an alternate form of mutable borrow in which the borrowed path
+begins as *reserved* and only later becomes fully locked. During the
+reservation period, shared accesses are permitted.
 
 
 # Unresolved questions
@@ -1352,5 +1738,8 @@ None at present.
 scope of a temporary value is sometimes the enclosing
 statement.
 
+[RFC 396]: https://github.com/rust-lang/rfcs/pull/396
 [RFC 2025]: https://github.com/rust-lang/rfcs/pull/2025
+[smr]: https://github.com/Ericson2314/a-stateful-mir-for-rust
+[10520]: https://github.com/rust-lang/rust/issues/10520
 
