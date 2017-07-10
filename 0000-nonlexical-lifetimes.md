@@ -734,6 +734,127 @@ These can be converted into the following lifetime constraints:
     ('foo: 'p) @ A/1
     ('bar: 'p) @ B/3
     
+### Reborrow constraints
+
+There is one final source of constraints. It frequently happen that we
+have a borrow expression that is "reborrowing" the referent of an
+existing reference:
+
+    let x: &'x i32 = ...;
+    let y: &'y i32 = &*x;
+
+In such cases, there is a connection between the lifetime `'y` of the
+borrow and the lifetime `'x` of the original reference. In particular,
+`'x` must outlive `'y` (`'x: 'y`). In simple cases like this, the
+relationship is the same regardless of whether the original reference
+`x` is a shared (`&`) or mutable (`&mut`) reference. However, in more
+complex cases that involve multiple dereferences, the treatment is
+different.
+
+As before, we will cover the rule using inference rules. In this case,
+the rules are for "borrow `LV` for `'b` at `P`", meaning roughly that
+"it is ok to borrow the lvalue `LV` for the lifetime `'b` starting at
+the point `P`" (note that `P` here is the point *after* the borrow
+itself, since that is when the borrow "takes effect").
+
+We'll start with some simple cases that don't involve any
+dereferences. These add no additional lifetime constraints:
+
+    ---------------------------
+    borrow `x` for `'b` at `P`
+
+    borrow `LV` for `'b` at `P`
+    ---------------------------
+    borrow `LV.f` for `'b` at `P`
+    
+In other words, if you just borrow a local variable, like `a = &b`,
+that doesn't involve any additional constraints. Similarly, if you
+borrow a field, like `a = &b.f`, that just adds whatever constraints
+are needed to process the owner of the field. In the case of `&b.f`,
+the owner is the local variable `b`, and hence there would be no additional
+constraints.
+
+Next we have the rule for borrowing a shared referent:
+
+    typeof(LV) = &'r T
+    ('b: 'r) @ P <-- new lifetime constraint
+    ------------------------
+    borrow `*LV` for `'b` at `P`
+    
+This rule states when when you borrow a shared referent `*LV`, we have
+to make sure that the lifetime of the reference (`'r`, here) outlives
+the lifetime of the borrow (`'b`). It is helpful to think of this in
+terms of leasing an apartment: if I have leased an apartment from
+someone for some duration, that duration of my original lease is
+`'r`. If I were to sublease to someone else for duration `'b`, that
+would be acceptable, but naturally that sublease must end before my
+original lease does. Hence `'r: 'b`.
+
+Note that the rule for shared referents does **not** recurse: that is,
+we do not consider the context `LV` by which the shared referent was
+reached. In particular, imagine an lvalue `x` of type `&'outer &'inner
+i32`. Intuitively, if we were to borrow `**x` for the lifetime `'b`,
+we only need to ensure that `'b: 'inner` -- `'b: 'outer` is not
+required. This is because we could always have first *copied* `*x` (of
+type `&'inner i32`) out into a temporary `t` and then just borrowed
+`*t`. This is precisely what the rule achieves: when we encounter
+`**x`, `LV` is `*x`, and hence of type `&'inner i32`. We thus add the
+requirement that `'b: 'inner` and stop. (If we were to recursive, we
+would encounter an LV of `x`, which is of type `&'outer &'inner i32`,
+and hence add the additional requirement that `'b: 'outer`; this would
+result in us being more conservative than necessary, as demonstrated
+by [this test in the prototype][bck-wvare].)
+
+[bck-wvare]: PROTOTYPE/borrowck-write-variable-after-ref-extracted.nll
+
+The rule for **mutable** referents is similar to the rule for shared
+referents, but it **does** recurse:
+
+    borrow `LV` for `'b` at `P` <-- recursive step
+    typeof(LV) = &'r mut T
+    ('b: 'r) @ P <-- lifetime constraint
+    ------------------------
+    borrow `*LV` for `'b` at `P`
+
+This recursive step is important to prevent unsoundness. One way to
+understand it is to obseve that `&mut` references are not copy, and
+hence we could not safely copy the value into a temporary, so we must
+ensure that all steps along the **original path** remain valid for the
+entire borrow. Here is an example Rust program that would be unsound
+without the recursive step (it corresponds to [this test][bck-rrwrmb]
+in the prototype):
+
+[bck-rrwrmb]: PROTOTYPE/borrowck-read-ref-while-referent-mutably-borrowed.nll
+
+```rust
+let foo = Foo { ... };
+let p: &'p mut Foo = &mut foo;
+let q: &'q1 mut &'q2 mut Foo = &mut p;
+let r: &'r mut Foo = &mut **q;
+use(*p); // <-- This line should result in an ERROR
+use(r);
+```
+
+The key point here is that we create a reference `r` by reborrowing
+`**q`; `r` is then later used in the final line of the program. This
+use of `r` must extend the lifetime of the borrows used to create
+*both* `p` *and* `q`. Otherwise, one could access (and mutate) the
+same memory through both `*r` and `*p`. (In fact, the real rustc did
+in its early days have a soundness bug much like this one.)
+
+As one final way of looking at the previous example, consider it like
+this. To create the mutable reference `p`, we get a "lock" on `foo`
+(that lasts so long as `p` is in use). We then take a lock on the
+mutable reference `p` to create `q`; this lock must last for as long
+as `q` is in use. When we create `r` by borrowing `**q`, that is the
+last direct use of `q` -- so you might think we can release the lock
+on `p`, since `q` is no longer in (direct) use. However, that would be
+unsound, since then `r` and `*p` could both be used to access the same
+memory. The key is to recognize that `r` represents an indirect use of
+`q` (and `q` in turn is an indirect use of `p`), and hence so long as
+`r` is in use, `p` must `q` also be considered "in use" (and hence
+their "locks" still enforced).
+
 ### Solving constraints
 
 Once the constraints are created, the **inference algorithm** solves
