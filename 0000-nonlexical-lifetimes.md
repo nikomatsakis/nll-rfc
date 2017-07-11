@@ -468,6 +468,60 @@ We describe the design in "layers":
 3. Finally, we will extend the design to consider named lifetime parameters,
    like those in problem case 3.
 
+## Layer 0: Definitions
+
+Before we can describe the design, we have to define the terms that we
+will be using. The RFC is defined in terms of a simplified version of
+MIR, eliding various details that don't introduce fundamental
+complexity.
+
+**Lvalues**. A MIR "lvalue" is a path that leads to a memory location.
+The full MIR Lvalues are defined [via a Rust enum][lvaluecode] and
+contain a number of knobs, most of which are not relevant for this RFC. So
+we will present a simplified form of lvalues for now:
+
+```
+LV = x       // local variable
+   | LV.f    // field access
+   | *LV     // deref
+```
+
+The precedence of `*` is low, so `*a.b.c` will deref `a.b.c`; to deref
+just `a`, one would write `(*a).b.c`.
+
+**Prefixes.** We say that the prefixes of an lvalue are all the
+lvalues you get by stripping away fields and derefs. So the prefixes
+of `*a.b` would be `*a.b`, `a.b`, and `a`.
+
+[lvaluecode]: https://github.com/rust-lang/rust/blob/bf0a9e0b4d3a4dd09717960840798e2933ec7568/src/librustc/mir/mod.rs#L839-L851
+
+**Control-flow graph.** MIR is organized into a
+[control-flow graph][cfg] rather than an abstract syntax tree. It is
+created in the compiler by transforming the "HIR" (high-level IR). The
+MIR CFG consists of a set of [basic blocks][bbdata]. Each basic block
+has a series of [statements][stmt] and a
+[terminator][term]. Statements that concern us in this RFC fall into
+three categories:
+
+- assignments like `x = y`; the RHS of such an assignment is called an
+  [rvalue][]. There are no compound rvalues, and hence each statement
+  is a discrete action that executes instantaneously. For example, the
+  Rust expression `a = b + c + d` would be compiled into two MIR
+  instructions, like `tmp0 = b + c; a = tmp0 + d;`.
+- `drop(lvalue)` deallocates an lvalue, if there is a value in it; in the
+  limit, this requires runtime checks (a pass in mir, called elaborate drops,
+  performs this transformation).
+- `StorageDead(x)` deallocates the stack storage for `x`. These are used by LLVM to allow
+  stack-allocated values to use the same stack slot (if their live storage ranges are disjoint).
+  [Ralf Jung's recent blog post has more details.][rjung-sd]
+  
+[rjung-sd]: https://www.ralfj.de/blog/2017/06/06/MIR-semantics.html
+[rvalue]: https://github.com/rust-lang/rust/blob/bf0a9e0b4d3a4dd09717960840798e2933ec7568/src/librustc/mir/mod.rs#L1037-L1071
+[bbdata]: https://github.com/rust-lang/rust/blob/bf0a9e0b4d3a4dd09717960840798e2933ec7568/src/librustc/mir/mod.rs#L443-L463
+[stmt]: https://github.com/rust-lang/rust/blob/bf0a9e0b4d3a4dd09717960840798e2933ec7568/src/librustc/mir/mod.rs#L774-L814
+[term]: https://github.com/rust-lang/rust/blob/bf0a9e0b4d3a4dd09717960840798e2933ec7568/src/librustc/mir/mod.rs#L465-L552
+[cfg]: https://en.wikipedia.org/wiki/Control_flow_graph
+
 ## Layer 1: Control-flow within a function
 
 ### Running Example
@@ -751,85 +805,110 @@ relationship is the same regardless of whether the original reference
 complex cases that involve multiple dereferences, the treatment is
 different.
 
-As before, we will cover the rule using inference rules. In this case,
-the rules are for "borrow `LV` for `'b` at `P`", meaning roughly that
-"it is ok to borrow the lvalue `LV` for the lifetime `'b` starting at
-the point `P`" (note that `P` here is the point *after* the borrow
-itself, since that is when the borrow "takes effect").
+**Supporting prefixes.** To define the reborrow constraints, we first
+introduce the idea of supporting prefixes -- this definition will be
+useful in a few places. The *supporting prefixes* for an lvalue are
+formed by stripping away fields and derefs, except that we stop when
+we reach the deref of a shared reference. Inituitively, shared
+references are different because they are `Copy` -- and hence one
+could always copy the shared reference into a temporary and get an
+equivalent path. Here are some examples of supporting prefixes:
 
-We'll start with some simple cases that don't involve any
-dereferences. These add no additional lifetime constraints:
+```
+let r: (&(i32, i64), (f32, f64));
 
-    ---------------------------
-    borrow `x` for `'b` at `P`
+// The path (*r.0).1 has type `i64` and supporting prefixes:
+// - (*r.0).1
+// - *r.0
 
-    borrow `LV` for `'b` at `P`
-    ---------------------------
-    borrow `LV.f` for `'b` at `P`
+// The path r.1.0 has type `f32` and supporting prefixes:
+// - r.1.0
+// - r.1
+// - r
+
+let m: (&mut (i32, i64), (f32, f64));
+
+// The path (*m.0).1 has type `i64` and supporting prefixes:
+// - (*m.0).1
+// - *m.0
+// - *m
+// - m
+```
+
+**Reborrow constraints.** Consider the case where we have a borrow
+(shared or mutable) of some lvalue `lv_b` for the lifetime `'b`:
+
+    lv_l = &'b lv_b      // or:
+    lv_l = &'b mut lv_b
+
+In that case, we compute the supporting prefixes of `lv_b`, and find
+every deref lvalue `*lv` in the set where `lv` is a reference with
+lifetime `'a`. We then add a constraint `('a: 'b) @ P`, where `P` is
+the point following the borrow (that's the point where the borrow
+takes effect).
+
+Let's look at some examples. In each case, we will link to the
+corresponding test from the prototype implementation.
+
+[**Example 1.**][bck-rvwbi] To see why this rule is needed, let's
+first consider a simple example involving a single reference:
+
+[bck-rvwbi]: https://github.com/nikomatsakis/nll/blob/master/test/borrowck-read-variable-while-borrowed-indirect.nll
+
+```rust
+let mut foo: i32     = 22;
+let r_a: &'a mut i32 = &'a mut foo;
+let r_b: &'b mut i32 = &'b mut *r_a;
+...
+use(r_b);
+```
     
-In other words, if you just borrow a local variable, like `a = &b`,
-that doesn't involve any additional constraints. Similarly, if you
-borrow a field, like `a = &b.f`, that just adds whatever constraints
-are needed to process the owner of the field. In the case of `&b.f`,
-the owner is the local variable `b`, and hence there would be no additional
-constraints.
+In this case, the supporting prefixes of `*r_a` are `*r_a` and `r_a`
+(because `r_a` is a mutable reference, we recurse). Only one of those,
+`*r_a`, is a deref lvalue, and the reference `r_a` being dereferenced
+hs the lifetime `'a`. So we would add the constraint that `'a: 'b`,
+thus ensuring that `foo` is considered borrowed so long as `r_b` is in
+use. Without this constraint, the lifetime `'a` would end after the
+second borrow, and hence `foo` would be considered unborrowed, even
+though `*r_b` could still be used to access `foo`.
 
-Next we have the rule for borrowing a shared referent:
-
-    typeof(LV) = &'r T
-    ('b: 'r) @ P <-- new lifetime constraint
-    ------------------------
-    borrow `*LV` for `'b` at `P`
-    
-This rule states when when you borrow a shared referent `*LV`, we have
-to make sure that the lifetime of the reference (`'r`, here) outlives
-the lifetime of the borrow (`'b`). It is helpful to think of this in
-terms of leasing an apartment: if I have leased an apartment from
-someone for some duration, that duration of my original lease is
-`'r`. If I were to sublease to someone else for duration `'b`, that
-would be acceptable, but naturally that sublease must end before my
-original lease does. Hence `'r: 'b`.
-
-Note that the rule for shared referents does **not** recurse: that is,
-we do not consider the context `LV` by which the shared referent was
-reached. In particular, imagine an lvalue `x` of type `&'outer &'inner
-i32`. Intuitively, if we were to borrow `**x` for the lifetime `'b`,
-we only need to ensure that `'b: 'inner` -- `'b: 'outer` is not
-required. This is because we could always have first *copied* `*x` (of
-type `&'inner i32`) out into a temporary `t` and then just borrowed
-`*t`. This is precisely what the rule achieves: when we encounter
-`**x`, `LV` is `*x`, and hence of type `&'inner i32`. We thus add the
-requirement that `'b: 'inner` and stop. (If we were to recursive, we
-would encounter an LV of `x`, which is of type `&'outer &'inner i32`,
-and hence add the additional requirement that `'b: 'outer`; this would
-result in us being more conservative than necessary, as demonstrated
-by [this test in the prototype][bck-wvare].)
+[**Example 2.**][bck-wvare] Consider now a case with a double indirection:
 
 [bck-wvare]: PROTOTYPE/borrowck-write-variable-after-ref-extracted.nll
 
-The rule for **mutable** referents is similar to the rule for shared
-referents, but it **does** recurse:
+```rust
+let mut foo: i32     = 22;
+let mut r_a: &'a i32 = &'a foo;
+let r_b: &'b &'a i32 = &'b r_a;
+let r_c: &'c i32     = &'c **r_b;
+// What is considered borrowed here?
+use(r_c);
+```
+    
+Just as before, it is important that, so long as `r_c` is in use,
+`foo` is considered borrowed. However, what about the variable `r_a`:
+should *it* considered borrowed? The answer is no: once `r_c` is
+initialized, the value of `r_a` is no longer important, and it would
+be fine to (for example) overwrite `r_a` with a new value, even as
+`foo` is still considered borrowed. This result falls out from our
+reborrowing rules: the supporting paths of `**r_b` is just `**r_b`.
+We do not add any more paths because this path is already a
+dereference of `*r_b`, and `*r_b` has has (shared reference) type `&'a
+i32`. Therefore, we would add one reborrow constraint: that `'a: 'c`.
+This constraint ensures that as long as `r_c` is in use, the borrow of
+`foo` remains in force, but the borrow of `r_a` (which has the
+lifetime `'b`) can expire.
 
-    borrow `LV` for `'b` at `P` <-- recursive step
-    typeof(LV) = &'r mut T
-    ('b: 'r) @ P <-- lifetime constraint
-    ------------------------
-    borrow `*LV` for `'b` at `P`
-
-This recursive step is important to prevent unsoundness. One way to
-understand it is to obseve that `&mut` references are not copy, and
-hence we could not safely copy the value into a temporary, so we must
-ensure that all steps along the **original path** remain valid for the
-entire borrow. Here is an example Rust program that would be unsound
-without the recursive step (it corresponds to [this test][bck-rrwrmb]
-in the prototype):
+[**Example 3.**][bck-rrwrmb] The previous example showed how a borrow
+of a shared reference can expire once it has been dereferenced. With
+mutable references, however, this is not safe. Consider the following example:
 
 [bck-rrwrmb]: PROTOTYPE/borrowck-read-ref-while-referent-mutably-borrowed.nll
 
 ```rust
 let foo = Foo { ... };
 let p: &'p mut Foo = &mut foo;
-let q: &'q1 mut &'q2 mut Foo = &mut p;
+let q: &'q mut &'p mut Foo = &mut p;
 let r: &'r mut Foo = &mut **q;
 use(*p); // <-- This line should result in an ERROR
 use(r);
@@ -842,18 +921,24 @@ use of `r` must extend the lifetime of the borrows used to create
 same memory through both `*r` and `*p`. (In fact, the real rustc did
 in its early days have a soundness bug much like this one.)
 
-As one final way of looking at the previous example, consider it like
-this. To create the mutable reference `p`, we get a "lock" on `foo`
-(that lasts so long as `p` is in use). We then take a lock on the
-mutable reference `p` to create `q`; this lock must last for as long
-as `q` is in use. When we create `r` by borrowing `**q`, that is the
-last direct use of `q` -- so you might think we can release the lock
-on `p`, since `q` is no longer in (direct) use. However, that would be
-unsound, since then `r` and `*p` could both be used to access the same
-memory. The key is to recognize that `r` represents an indirect use of
-`q` (and `q` in turn is an indirect use of `p`), and hence so long as
-`r` is in use, `p` must `q` also be considered "in use" (and hence
-their "locks" still enforced).
+Because dereferencing a mutable reference does not stop the supporting
+prefixes from being enumerated, the supporting prefixes of `**q` are
+`**q`, `*q`, and `q`. Therefore, we add two reborrow constraints: `'q:
+'r` and `'p: 'r`, and hence both borrows are indeed considered in
+scope at the line in question.
+
+As an alternate way of looking at the previous example, consider it
+like this. To create the mutable reference `p`, we get a "lock" on
+`foo` (that lasts so long as `p` is in use). We then take a lock on
+the mutable reference `p` to create `q`; this lock must last for as
+long as `q` is in use. When we create `r` by borrowing `**q`, that is
+the last direct use of `q` -- so you might think we can release the
+lock on `p`, since `q` is no longer in (direct) use. However, that
+would be unsound, since then `r` and `*p` could both be used to access
+the same memory. The key is to recognize that `r` represents an
+indirect use of `q` (and `q` in turn is an indirect use of `p`), and
+hence so long as `r` is in use, `p` must `q` also be considered "in
+use" (and hence their "locks" still enforced).
 
 ### Solving constraints
 
@@ -1360,152 +1445,35 @@ section.
 
 At this point, we have computed which loans are in scope at each
 point. Next, we traverse the MIR and identify actions that are illegal
-given the loans in scope. The following sorts of MIR actions may be
-illegal in the presence of an applicable loan.
+given the loans in scope. Rather than go through every kind of MIR statement,
+we can break things down into four kinds of actions that can be performed:
 
-**Accesses.** 
+- Moving an lvalue
+- Reading an lvalue
+- Writing an lvalue
+- Killing the storage for a local variable (i.e., `StorageDead`)
 
-**Mutable borrows.**
+For each of these kinds of actions, we will specify below the rules
+that determine when they are legal, given the set of loans L in scope
+at the start of the action. The second phase of the borrow check
+therefore consists of iterating over each statement in the MIR and
+checking, given the in-scope loans, whether the actions it performs
+are legal. Translating MIR statements into actions is mostly
+straightforward:
 
-**Upgrades.**
+- A drop statement counts as a **move**.
+- A `StorageDead` statement counts as **killing the storage** (and indeed
+  is the only thing that does).
+- An assignment statement `LV = RV` always **writes** to `LV`.
+- Within the rvalue `RV`:
+  - Each lvalue operand is either a **read** or a **move** action, depending
+    on the type of the lvalue implements `Copy`.
+  - A shared borrow `&LV` counts as a **read**.
+    - XXX nested mutable calls
+  - A mutable borrow `&mut LV` counts as **both a read and a write**.
 
-**Moves.** Moves of an lvalue that is borrowed.
-
-**StorageDead.** StorageDead statements are invalid if they affect a
-path which is borrowed. (XXXX)
-
-**Assignments.** An assignment `lv = <rvalue>` is illegal if there is
-a loan (of any kind) of some path `lv2` and `lv2 invalidated-by lv`
-holds. 
-
-Scenarios:
-
-- write to W, while B borrowed
-- struct.a, struct.x -- OK
-- struct.a.b, struct.x -- OK
-- struct.x, struct.x.y -- ERROR
-- struct.x.y, struct.x -- ERROR
-- union.a.b, union.x -- ERROR
-- ref, (*ref).f -- OK
-- (*ref.f), ref -- ERROR if ref mutably borrowed, but how/why? Maybe through a different path.
-
-
-`invalidated-by` is a very simple judgement defined as follows
-(using a Prolog-esque notation):
-
-```
-LV invalidated-by LV.
-
-LV.f invalidated-by LV.
-
-LV.f invalidated-by LV.g :- typeof(LV) is a union.
-
-*LV invalidated-by LV :- typeof(LV) is not `&` or `&mut`.
-
-LV[_] invalidated-by LV.
-
-(LV as Variant) invalidated-by LV.
-```
-
-```
-// Local variables are independent slots,
-// as are statics.
-x does-not-affect y :- x != y.
-static1 does-not-affect static2 :- static1 != static2.
-static does-not-effect x.
-
-LV.f does-not-affect LV.g :- f != g, LV is not a union.
-
-LV[I] does-not-affect LV[J] :- I and J are distinct indices.
-
-(LV as Variant1) does-not-affect (LV as Variant2) :- Variant1 != Variant2.
-
-LV does-not-affect *LV :- LV is a reference.
-
-LV1.f does-not-affect LV2.g :- LV1 does-not-affect LV2.g.
-```
-
-```
-LV partly-clobbers LV.
-
-LV.f partly-clobbers LV.
-
-*LV 
-
-LV[_] invalidated-by LV.
-
-(LV as Variant) invalidated-by LV.
-
-
-
-
-// MIR local variables are each independent slots.
-x not-overwrites y :-
-    x != y.
-
-// Local variables are disjoint from statics.
-x disjoint static.
-
-// Overwriting LV1 can't affect some part of LV2
-// if it does not affect ANY of LV2.
-LV1 not-overwrites (LV2 PROJ) :-
-  LV1 not-overwrites LV2.
-
-// Overwriting one projection from an LV may 
-// not affect other projections, but that dependents
-// on the projections.
-LV PROJ1 not-overwrites LV PROJ2 :-
-  PROJ1 not-overwrites PROJ2.
-  
-// Writing a new value into 
-LV not-overwrites *LV :-
-  typeof(LV) is `&` or `&mut`
-  
-F disjoint G :-
-  F and G are both fields declared in a struct or enum variant.
-
-(as Variant1) disjoint (as Variant2) :-
-  Variant1 != Variant2.
-  
-```
-
-where overwriting `lv` would
-overwrite `lv2`. The following judgement `lv overwrites lv2` describes
-those cases (this is Prolog notation).
-
-```
-// Overwrites is transitive.
-LV overwrites LV2 :-
-  LV overwrites LV1,
-  LV1 overrites LV2.
-  
-LV overwrites LV.
-
-LV overwrites LV.F.
-
-LV.F overwrites LV.G :-
-  typeof(LV) is a union.
-
-LV overwrites LV[I].
-
-LV overwrites (LV as Variant).
-
-LV overwrites *LV :-
-  LV: Box<T>. // the borrow checker still has some built-in treatment of Box<T>
-```
-
-To see how these rules work, let us consider two examples. The first
-is our simplified variant of Problem Case #4:
-
-```rust
-let list: &mut List<T> = ...;
-let v = &mut (*list).value;
-list = ...;
-```
-
-In this case, the assignment to `list` is permitted
-With respect to Problem Case #4, the important point here is that `LV
-overwrites *LV` is not true if `LV` is a reference, which means that 
+**Reading an lvalue LV** is legal if there are no **intersecting** mutable loans
+in scope. A loan is said to **intersect** LV 
 
 # How We Teach This
 [how-we-teach-this]: #how-we-teach-this
