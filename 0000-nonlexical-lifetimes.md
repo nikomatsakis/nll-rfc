@@ -874,7 +874,7 @@ though `*r_b` could still be used to access `foo`.
 
 [**Example 2.**][bck-wvare] Consider now a case with a double indirection:
 
-[bck-wvare]: PROTOTYPE/borrowck-write-variable-after-ref-extracted.nll
+[bck-wvare]: https://github.com/nikomatsakis/nll/blob/master/test/borrowck-write-variable-after-ref-extracted.nll
 
 ```rust
 let mut foo: i32     = 22;
@@ -903,7 +903,7 @@ lifetime `'b`) can expire.
 of a shared reference can expire once it has been dereferenced. With
 mutable references, however, this is not safe. Consider the following example:
 
-[bck-rrwrmb]: PROTOTYPE/borrowck-read-ref-while-referent-mutably-borrowed.nll
+[bck-rrwrmb]: https://github.com/nikomatsakis/nll/blob/master/test/borrowck-read-ref-while-referent-mutably-borrowed.nll
 
 ```rust
 let foo = Foo { ... };
@@ -1355,34 +1355,6 @@ modified, even if their referent is borrowed.** This refers to the
 "Problem Case #4" described in the introduction; we wish to accept the
 original program.
 
-### Brief overview: MIR
-
-The borrow checker here is defined over the (unoptimized,
-non-drop-elaborated) MIr of the source program. This RFC does not
-attempt to define MIR in detail, but there are a few points worth
-covering. First, the term **lvalue** in MIR has a very specific
-meaning. An lvalue `lv` is defined by the following grammar:
-
-```
-LV = x               // a local variable, temporary
-   | static          // a static 
-   | LV PROJ         // a "projection" from LV
-PROJ = F             // field access
-     | *             // dereference
-     | [I]           // built-in indexing (i.e., for a `[T; n]` or `[T]` type);
-                     // the index I might be another value, or in some cases
-                     // a kind of constant (specifically when desugaring slice
-                     // patterns)
-     | as Variant    // downcasting, used when desugaring matches
-   | *LV             // deref of a reference
-   | LV.F            // interior field access
-   | LV[I]           // built-in indexing (i.e., for a `[T; n]` or `[T]` type);
-                     // the index I might be another value, or in some cases
-                     // a kind of constant (specifically when desugaring slice
-                     // patterns)
-   | (LV as Variant) // downcasting, used when desugaring matches
-```  
-
 ### Borrow checker phase 1: computing loans in scope
 
 The first phase of the borrow checker is computing, at each point in
@@ -1403,35 +1375,32 @@ b.c.d`), giving each tuple a unique index `i`. We can then represent
 the set of loans that are in scope at a particular point using a
 bit-set and do a standard forward data-flow propagation.
 
-We must however compute the "gen" and "kill" sets for these loans at
-every point. Given some borrow statement occuring at the point P with
-index `i` and lifetime `'a`:
+For a statement at point P in the graph, we define the "transfer
+function" -- that is, which loans it brings into or out of scope -- as
+follows:
 
-- The gen set of P is `{i}`, since that point brings the loan into
-  scope.
-- Do a depth-first search from P, stopping when we exit the lifetime
-  `'a`. Add `i` to the kill set for each node Q where we exit,
-  indicating that -- upon entry to Q -- the borrow is no longer
-  in-scope, as its lifetime has expired.
-  
-Finally, for each assignment `lv = <rvalue>` in the MIR, we may able
-to add additional kill bits. Specifically, we are looking for cases
-like the one in Problem Case #4:
+- any loans whose region cannot include P are killed;
+- if this is a borrow statement, the corresponding loan is generated;
+- if this is an assignment `lv = <rvalue>`, then any loan for some path P
+  of which `lv` is a prefix is killed.
+
+The last point bears some elaboration. This rule is what allows us to
+support cases like the one in Problem Case #4:
 
 ```rust
 let list: &mut List<T> = ...;
 let v = &mut (*list).value;
-list = ...;
+list = ...; // <-- assignment
 ```
 
-At the point of assignment, the loan of `(*list).value` is in-scope,
-but it does not have to be considered in-scope afterwards. This is
-because the variable `list` now holds a fresh value, and that new
-value has not yet been borrowed (or else we could not have produced
-it). Specifically, whenever we see an assignment `lv = <rvalue>` in
-MIR, we can clear all loans where the borrowed path `lv_loan` has `lv`
-as a prefix. (In our example, the assignment is to `list`, and the
-loan path `(*list).value` has `list` as a prefix.)
+At the point of the marked assignment, the loan of `(*list).value` is
+in-scope, but it does not have to be considered in-scope
+afterwards. This is because the variable `list` now holds a fresh
+value, and that new value has not yet been borrowed (or else we could
+not have produced it). Specifically, whenever we see an assignment `lv
+= <rvalue>` in MIR, we can clear all loans where the borrowed path
+`lv_loan` has `lv` as a prefix. (In our example, the assignment is to
+`list`, and the loan path `(*list).value` has `list` as a prefix.)
 
 **NB.** In this phase, when there is an assignment, we always clear
 all loans that applied to the overwritten path; however, in some cases
@@ -1472,8 +1441,40 @@ straightforward:
     - XXX nested mutable calls
   - A mutable borrow `&mut LV` counts as **both a read and a write**.
 
-**Reading an lvalue LV** is legal if there are no **intersecting** mutable loans
-in scope. A loan is said to **intersect** LV 
+**Moving an lvalue LV**. Moving an lvalue is illegal if there is an
+**intersecting** loan. A loan is said to **intersect** an lvalue LV
+if:
+
+- the loan is for the path LV;
+  - so: moving a path like `a.b.c` is illegal if `a.b.c` is borrowed
+- the loan is for some prefix of the path LV;
+  - so: moving a path like `a.b.c` is illegal if `a` or `a.b` is borrowed
+- LV is a supporting prefix of the loan path
+  - so: moving a path like `a` is illegal if `a.b` is borrowed
+  - but: moving `a` is legal if `*a` is borrowed, so long as `a` is a shared reference
+
+**Reading an lvalue LV.** Reading an lvalue LV is legal if all
+intersecting loans in scope are shared loans. These are the same
+conditions that make a *move* illegal, except that any loan makes a
+move illegal, but a read is only illegl with a mutable loan.
+
+**Writing an lvalue LV or killing storage a variable X.** Writing an
+lvalue LV is legal and killing storage for a variable are legal under
+the same conditions. These conditions are somewhat more permissive
+than reads: the reason is that, when you write to a variable (or kill
+its storage), you prevent later accesses (unlike a read or a move). A
+write (or kill) of the path LV is illegal if:
+
+- there is a loan for the path LV;
+  - so: writing a path like `a.b.c` is illegal if `a.b.c` is borrowed
+- there is a loan for some prefix of the path LV;
+  - so: writing a path like `a.b.c` is illegal if `a` or `a.b` is borrowed
+- LV is a **freezing prefix** of the loan path
+  - freezing prefixes are found by stripping away fields, but stop at
+    any dereference
+  - so: writing a path like `a` is illegal if `a.b` is borrowed
+  - but: writing `a` is legal if `*a` is borrowed, whether or not `a`
+    is a shared or mutable reference
 
 # How We Teach This
 [how-we-teach-this]: #how-we-teach-this
