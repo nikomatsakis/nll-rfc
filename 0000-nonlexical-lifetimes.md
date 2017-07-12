@@ -1290,9 +1290,9 @@ with `'static` lifetime, so long as the function never returned:
 
 ```rust
 fn main() {
-  let x: usize;
-  let y: &'static x = &x;
-  loop { }
+    let x: usize;
+    let y: &'static x = &x;
+    loop { }
 }
 ```
 
@@ -1307,12 +1307,12 @@ let scope = Scope::new();
 let mut foo = 22;
 
 unsafe {
-  // dtor joins the thread
-  let _guard = scope.spawn(&mut foo);
-  loop {
-    foo += 1;
-  }
-  // drop of `_guard` joins the thread
+    // dtor joins the thread
+    let _guard = scope.spawn(&mut foo);
+    loop {
+        foo += 1;
+    }
+    // drop of `_guard` joins the thread
 }
 ```
 
@@ -1891,9 +1891,9 @@ to the interaction with function signatures. For example:
 
 ```rust
 impl Foo {
-  fn foo(&self, y: &u8) -> &u8 {
-    x
-  }
+    fn foo(&self, y: &u8) -> &u8 {
+        x
+    }
 }  
 ```
 
@@ -2046,13 +2046,13 @@ these two methods cannot be used "in parallel" with one another:
 
 ```rust
 impl Foo {
-  fn get_a(&self) -> &A { &self.a }
-  fn inc_b(&mut self) { self.b.value += 1; }
-  fn bar(&mut self) {
-    let a = self.get_a();
-    self.inc_b(); // Error: self is already borrowed
-    use(a);
-  }
+    fn get_a(&self) -> &A { &self.a }
+    fn inc_b(&mut self) { self.b.value += 1; }
+    fn bar(&mut self) {
+        let a = self.get_a();
+        self.inc_b(); // Error: self is already borrowed
+        use(a);
+    }
 }
 ```
 
@@ -2062,9 +2062,9 @@ methods on the fields themselves:
 
 ```rust
 fn bar(&mut self) {
-  let a = self.a.get();
-  self.b.inc();
-  use(a);
+    let a = self.a.get();
+    self.b.inc();
+    use(a);
 }
 ```
 
