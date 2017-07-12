@@ -344,8 +344,8 @@ into a `Vec<&mut T>`:
 ```rust
 struct List<T> {
     value: T,
-    next: Option<Box<List<T>>>
-}b
+    next: Option<Box<List<T>>>,
+}
 
 fn to_refs<T>(mut list: &mut List<T>) -> Vec<&mut T> {
     let mut result = vec![];
