@@ -1065,7 +1065,7 @@ Translated into MIR, the example will look roughly as follows:
 let mut data: Vec<i32>;
 let slice: &'slice mut i32;
 START {
-    vec = ...;
+    data = ...;
     slice = &'borrow mut data;
     capitalize(slice);
     data.push('d');
