@@ -937,7 +937,7 @@ lock on `p`, since `q` is no longer in (direct) use. However, that
 would be unsound, since then `r` and `*p` could both be used to access
 the same memory. The key is to recognize that `r` represents an
 indirect use of `q` (and `q` in turn is an indirect use of `p`), and
-hence so long as `r` is in use, `p` must `q` also be considered "in
+hence so long as `r` is in use, `p` and `q` must also be considered "in
 use" (and hence their "locks" still enforced).
 
 ### Solving constraints
