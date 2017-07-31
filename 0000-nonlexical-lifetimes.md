@@ -211,10 +211,10 @@ purposes of this section, assume that the `entry` API for maps does
 not exist):
 
 ```rust
-fn get_default<'m,K,V:Default>(map: &'m mut HashMap<K,V>,
+fn get_default<'r,K,V:Default>(map: &'r mut HashMap<K,V>,
                                key: K)
-                               -> &'m mut V {
-    match map.get_mut(&key) { // -------------+ 'm
+                               -> &'r mut V {
+    match map.get_mut(&key) { // -------------+ 'r
         Some(value) => value,              // |
         None => {                          // |
             map.insert(key, V::default()); // |
@@ -231,9 +231,9 @@ the lifetimes at play are quite different. The reason is that, in the
 `Some` branch, the value is being **returned out** to the caller.
 Since `value` is a reference into the map, this implies that the `map`
 will remain borrowed **until some point in the caller** (the point
-`'m`, to be exact). To get a better intuition for what this lifetime
-parameter `'m` represents, consider some hypothetical caller of
-`get_default`: the lifetime `'m` then represents the span of code in
+`'r`, to be exact). To get a better intuition for what this lifetime
+parameter `'r` represents, consider some hypothetical caller of
+`get_default`: the lifetime `'r` then represents the span of code in
 which that caller will use the resulting reference:
 
 ```rust
@@ -241,7 +241,7 @@ fn caller() {
     let mut map = HashMap::new();
     ...
     {
-        let v = get_default(&mut map, key); // -+ 'm
+        let v = get_default(&mut map, key); // -+ 'r
           // +-- get_default() -----------+ //  |
           // | match map.get_mut(&key) {  | //  |
           // |   Some(value) => value,    | //  |
@@ -259,10 +259,10 @@ If we attempt the same workaround for this case that we tried
 in the previous example, we will find that it does not work:
 
 ```rust
-fn get_default1<'m,K,V:Default>(map: &'m mut HashMap<K,V>,
+fn get_default1<'r,K,V:Default>(map: &'r mut HashMap<K,V>,
                                 key: K)
-                                -> &'m mut V {
-    match map.get_mut(&key) { // -------------+ 'm
+                                -> &'r mut V {
+    match map.get_mut(&key) { // -------------+ 'r
         Some(value) => return value,       // |
         None => { }                        // |
     }                                      // |
@@ -282,12 +282,12 @@ the fact that the borrow checker uses the precise control-flow of the
 function to determine what borrows are in scope.
 
 ```rust
-fn get_default2<'m,K,V:Default>(map: &'m mut HashMap<K,V>,
+fn get_default2<'r,K,V:Default>(map: &'r mut HashMap<K,V>,
                                 key: K)
-                                -> &'m mut V {
+                                -> &'r mut V {
     if map.contains(&key) {
     // ^~~~~~~~~~~~~~~~~~ 'n
-        return match map.get_mut(&key) { // + 'm
+        return match map.get_mut(&key) { // + 'r
             Some(value) => value,        // |
             None => unreachable!()       // |
         };                               // v
@@ -304,7 +304,7 @@ fn get_default2<'m,K,V:Default>(map: &'m mut HashMap<K,V>,
 What has changed here is that we moved the call to `map.get_mut`
 inside of an `if`, and we have set things up so that the if body
 unconditionally returns. What this means is that a borrow begins at
-the point of `get_mut`, and that borrow lasts until the point `'m` in
+the point of `get_mut`, and that borrow lasts until the point `'r` in
 the caller, but the borrow checker can see that this borrow *will not
 have even started* outside of the `if`. So it does not consider the
 borrow in scope at the point where we call `map.insert`.
@@ -319,9 +319,9 @@ both nicer to read and more efficient even than the original version,
 since it avoids extra lookups on the "not present" path as well:
 
 ```rust
-fn get_default3<'m,K,V:Default>(map: &'m mut HashMap<K,V>,
+fn get_default3<'r,K,V:Default>(map: &'r mut HashMap<K,V>,
                                 key: K)
-                                -> &'m mut V {
+                                -> &'r mut V {
     map.entry(key)
        .or_insert_with(|| V::default())
 }
@@ -1327,6 +1327,95 @@ This poses no problem for our analysis, however, because `'slice` "may
 dangle" during the drop, and hence is not considered live.
 
 ## Layer 3: Named lifetimes
+
+Until now, we've only considered lifetimes that are confined to the
+extent of a function. Often, of course, we want to reason about
+lifetimes that begin or end after the current function has ended. More
+subtle, we sometimes want to have lifetimes that sometimes begin and
+end in the current function, but which may (along some paths) extend
+into the caller. Consider Problem Case #3 (the corresponding test case
+in the prototype is the [get-default][] test):
+
+```rust
+fn get_default<'r,K,V:Default>(map: &'r mut HashMap<K,V>,
+                               key: K)
+                               -> &'r mut V {
+    match map.get_mut(&key) { // -------------+ 'r
+        Some(value) => value,              // |
+        None => {                          // |
+            map.insert(key, V::default()); // |
+            //  ^~~~~~ ERROR               // |
+            map.get_mut(&key).unwrap()     // |
+        }                                  // |
+    }                                      // |
+}                                          // v
+```
+
+When we translate this into MIR, we get something like the following
+(this is "pseudo-MIR"):
+
+```
+block START {
+  m1 = &'m1 mut *map;  // temporary created for `map.get_mut()` call
+  v = Map::get_mut(m1, &key);
+  switch v { SOME NONE };
+}
+
+block SOME {
+  return = v.as<Some>.0; // assign to return value slot
+  goto END;
+}
+
+block NONE {
+  Map::insert(&*map, key, ...);
+  m2 = &'m2 mut *map;  // temporary created for `map.get_mut()` call
+  v = Map::get_mut(m2, &key);
+  return = ... // "unwrap" of `v`
+  goto END; 
+}
+
+block END {
+  return;
+}  
+```
+
+The key to this example is that the first borrow of `map`, with the
+lifetime `'m1`, must extend to the end of the `'r`, but only if we
+branch to SOME. Otherwise, it should end once we enter the NONE block.
+
+To accommodate cases like this, we will extend the control-flow graph
+with additional nodes representing the **end-points** of each named
+lifetime (in other words, representing spans of time in the
+caller(s)). So, we can amend the control-flow graph above to something
+like this:
+
+```
+// ... same as before up until the END block:
+
+block END {
+  goto END_R;
+}
+
+block END_R { // end of the `'r` lifetime
+  goto STATIC_R;
+}
+
+block STATIC_R { // end of the `'static` lifetime
+}
+```
+
+The idea here is that these new blocks, `END_R` and `STATIC_R`,
+represent the points in the caller (or caller's caller, etc) where
+each of the named lifetime parameters will end. The edges between them
+represent the outlives relationships that we know of (so END_R ->
+STATIC_R because `'static` outlives `'r`). Now we can represent the
+lifetime `'m1` as the set `{START/1, START/2, SOME/0, SOME/1, END/0,
+END_R/0}` -- note that it includes the point `END_R/0`, which means
+that it must be valid up until the end of `'r`. However, it does *not*
+include the path `NONE/0`, even though `NONE/0` can reach `END_R/0`;
+this is another instance of the ability for lifetimes to contain
+"gaps". The lifetime `'m2`, covering the second borrow, will be
+inferred to `{NONE/2, NONE/3, NONE/4, END/0, END_R/0}`.
 
 APPROACH #1:
 
