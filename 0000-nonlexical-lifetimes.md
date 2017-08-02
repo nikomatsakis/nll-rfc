@@ -1470,7 +1470,11 @@ along the way, we'd like to fix two shortcomings of the borrow checker:
 Here, the plan is to continue with the `mut2` borrow solution proposed
 in [RFC 2025]. This RFC does not (yet) propose one of the type-based
 solutions described in RFC 2025, such as "borrowing for the future" or
-`Ref2`. The reasons why are discussed in the Alternatives section.
+`Ref2`. The reasons why are discussed in the Alternatives section. For
+simplicity, this description of the borrow checker ignores
+[RFC 2025]. The extensions described here are fairly orthogonal to the
+changes proposed in [RFC 2025], which in effect cause the start of a
+borrow to be delayed.
 
 **Second, permit variables containing mutable references to be
 modified, even if their referent is borrowed.** This refers to the
