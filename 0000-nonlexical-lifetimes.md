@@ -1207,7 +1207,7 @@ let vec: Vec<&'vec i32>;
 let p: &'p i32;
 
 foo = ...;
-vec = Vec:new();
+vec = Vec::new();
 p = &'foo foo;
 if true {
     vec.push(p);
@@ -1233,11 +1233,11 @@ block B {
                     
 block C {    
     // Key point: `foo` not borrowed here
+    use(vec);
     goto EXIT;
 }
                                 
 block EXIT {
-    use(vec);
 }
 ```
 
@@ -1407,8 +1407,8 @@ block STATIC_R { // end of the `'static` lifetime
 The idea here is that these new blocks, `END_R` and `STATIC_R`,
 represent the points in the caller (or caller's caller, etc) where
 each of the named lifetime parameters will end. The edges between them
-represent the outlives relationships that we know of (so END_R ->
-STATIC_R because `'static` outlives `'r`). Now we can represent the
+represent the outlives relationships that we know of (so `END_R ->
+STATIC_R` because `'static` outlives `'r`). Now we can represent the
 lifetime `'m1` as the set `{START/1, START/2, SOME/0, SOME/1, END/0,
 END_R/0}` -- note that it includes the point `END_R/0`, which means
 that it must be valid up until the end of `'r`. However, it does *not*
@@ -1417,14 +1417,34 @@ this is another instance of the ability for lifetimes to contain
 "gaps". The lifetime `'m2`, covering the second borrow, will be
 inferred to `{NONE/2, NONE/3, NONE/4, END/0, END_R/0}`.
 
-APPROACH #1:
+In general, we need to insert pessimistic edges between named
+lifetimes.  Put another way, for any two named lifetimes `'a` and
+`'b`, there should be edges between their corresponding end points
+`END_A` and `END_B` unless we know that `'a: 'b` or vice versa, in
+which case edges in only one direction are needed.  This models the
+possibility that *either* `'a` or `'b` could end first.
 
-- Extend the CFG
+(Note that the CFGs we will build, like all CFGs, overapproximates the
+possible control-flows: it permits describes either `'a` or `'b` to
+end first, but since one could traverse over the cycles, it would also
+permit `'a` to "end" multiple times and so forth. This should be ok --
+the analysis cares only about that we include all possible paths; it
+is also permitted to include other paths that will never *actually*
+occur in practice.)
 
-APPROACH #2:
+Once we have extended the CFG, we can handle map every reference to a
+named region like `'a` as being the set of nodes that begins with
+START and includes the end point of `'a`, but excludes the end points
+of every other region `'x`, unless `'a: 'x` is known to hold. So, in
+our example above, we would map references to `'r` to be the set
+`{START/*, SOME/*, NONE/*, END/*, END_R/0}`; this set does not include
+`STATIC/0` since `'r: 'static` is not known to hold. References to
+`'static` would simple include all the points in the control-flow
+graph.
 
-- Add skolemized nodes that can be included in the set
-- When user writes `'a`, that is 
+NB: As of this writing, this part of the prototype is not fully
+implemented. [Issue #12](https://github.com/nikomatsakis/nll/issues/12) describes
+the current status.
 
 ## Layer 4: How the borrow check works
 
@@ -1903,6 +1923,7 @@ using an alternate form of mutable borrow in which the borrowed path
 begins as *reserved* and only later becomes fully locked. During the
 reservation period, shared accesses are permitted.
 
+Proposals like this 
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
