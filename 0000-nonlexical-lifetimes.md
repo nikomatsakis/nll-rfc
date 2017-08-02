@@ -1904,10 +1904,11 @@ for connecting the type of a variable between distinct points). It is
 also a more natural fit for the surface language, in which variables
 have a single type.
 
-### Different "lifetime modes"
+### Different "lifetime roles
 
-In the discussion about nested method calls ([RFC 2025]), there were
-various proposals that were aimed at accepting code like the following:
+In the discussion about nested method calls ([RFC 2025], and the
+discussions that led up to it), there were various proposals that were
+aimed at accepting the naive desugaring of a call like `vec.push(vec.len())`: 
 
 ```rust
 let tmp0 = &mut vec;
@@ -1915,15 +1916,23 @@ let tmp1 = vec.len(); // does a shared borrow of vec
 Vec::push(tmp0, tmp1);
 ```
 
-This is because code like that would be the naive desugaring of
-`vec.push(vec.len())`. RFC 2025 proposed instead an alternative
-desugaring for `vec.push(vec.len())` which allowed us to accept such
-borrows when in method-call form (but not otherwise). This works by
-using an alternate form of mutable borrow in which the borrowed path
-begins as *reserved* and only later becomes fully locked. During the
-reservation period, shared accesses are permitted.
-
-Proposals like this 
+The alternatives to RFC 2025 were focused on augmenting the type of
+references to have distinct "roles' -- the most prominent such
+proposal was `Ref2<'r, 'w>`, in which mutable references change to
+have two distinct lifetimes, a "read" lifetime (`'r`) and a "write"
+lifetime (`'w`), where read encompasses the entire span of the
+reference, but write only contains those points where writes are
+occuring. This RFC does not attempt to change the approach to nested
+method calls, rather continuing with the RFC 2025 approach (which
+affects only the borrowck handling). However, if we did wish to adopt
+a `Ref2`-style approach in the future, it could be done backwards
+compatibly, but it would require modifying (for example) the liveness
+requirements. For example, currently, if a variable `x` is live at
+some point P, then all lifetimes in the type of `x` must contain P --
+but in the `Ref2` approach, only the read lifetime would have to
+contain P. This implies that lifetimes are treated differently
+depending on their "role". It seems like a good idea to isolate such a
+change into a distinct RFC.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
