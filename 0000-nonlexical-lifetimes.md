@@ -1270,12 +1270,17 @@ including the "else" branch thanks to location-aware subtyping.
 
 ## Layer 2: Accomodating dropck
 
-MIR includes an action that corresponds to "dropping" a value:
+MIR includes an action that corresponds to "dropping" a variable:
 
-    DROP(lvalue)
+    DROP(variable)
 
-This operation executes the destructor for `lvalue`, effectively
-"de-initializing" the memory in which the value resides.
+Note that while MIR supports general drops of any lvalue, at the point
+where this analysis is running, we are always dropping entire
+variables at a time. This operation executes the destructor for
+`variable`, effectively "de-initializing" the memory in which the
+value resides (if the variable -- or parts of the variable -- have
+already been dropped, then drop has no effect; this is not relevant to
+the current analysis).
 
 Interestingly, dropping a value frequently does not require that the
 lifetimes in the dropped value be valid. After all, dropping a
@@ -1296,11 +1301,19 @@ not be allowed to dangle for any other operation).
 More generally, RFC 1327 defined specific rules for which lifetimes in
 a type may dangle during drop and which may not. We integrate those
 rules into our liveness analysis as follows: the MIR instruction
-`DROP(lvalue)` is not treated like other MIR instructions when it
-comes to liveness. If it were, the value `lvalue` (and all lifetimes
-found in its type) would be forced to be live. Instead, we say that
-all lifetimes in `lvalue` which **cannot dangle** are live at the
-point of the drop, but the other lifetimes are not considered live.
+`DROP(variable)` is not treated like other MIR instructions when it
+comes to liveness. In a sense, conceptually we run two distinct liveness analysis (in practice, the prototype
+simply uses two bits per variable):
+
+1. The first, which we've already seen, indicates when a variable's
+   current value may be **used** in the future. This corresponds to
+   "non-drop" uses of the variable in the MIR. Whenever a variable is live by this definition,
+   all of the lifetimes in its type are live.
+2. The second, which we are adding now, indicates when a variable's
+   current value may be **dropped** in the future. This corresponds to
+   "drop" uses of the variable in the MIR. Whenever a variable is live
+   in *this* sense, all of the lifetimes in its type **except those
+   marked as may-dangle** are live.
 
 Permitting lifetimes to dangle during drop is very important! In fact,
 it is essential to even the most basic non-lexical lifetime examples,
