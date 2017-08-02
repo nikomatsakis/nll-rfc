@@ -1956,6 +1956,82 @@ change into a distinct RFC.
 
 None at present.
 
+# Appendix: What this proposal will not fix
+
+It is worth discussing a few kinds of borrow check errors that the
+current RFC will **not** eliminate. These are generally errors that
+cross procedural boundaries in some form or another.
+
+**Closure desugaring.** The first kind of error has to do with the
+closure desugaring. Right now, closures always capture local
+variables, even if the closure only uses some sub-path of the variable
+internally:
+
+```rust
+let get_len = || self.vec.len(); // borrows `self`, not `self.vec`
+self.vec2.push(...); // error: self is borrowed
+```
+
+This was discussed on [an internals thread][tc]. It is possible to fix
+this [by making the closure desugaring smarter][cc].
+
+[tc]: https://internals.rust-lang.org/t/borrow-the-full-stable-name-in-closures-for-ergonomics/5387
+[cc]: https://internals.rust-lang.org/t/borrow-the-full-stable-name-in-closures-for-ergonomics/5387/11?u=nikomatsakis
+
+**Disjoint fields across functions.** Another kind of error is when
+you have one method that only uses a field `a` and another that only
+uses some field `b`; right now, you can't express that, and hence
+these two methods cannot be used "in parallel" with one another:
+
+```rust
+impl Foo {
+  fn get_a(&self) -> &A { &self.a }
+  fn inc_b(&mut self) { self.b.value += 1; }
+  fn bar(&mut self) {
+    let a = self.get_a();
+    self.inc_b(); // Error: self is already borrowed
+    use(a);
+  }
+}
+```
+
+The fix for this is to refactor so as to expose the fact that the methods
+operate on disjoint data. For example, one can factor out the methods into
+methods on the fields themselves:
+
+```rust
+fn bar(&mut self) {
+  let a = self.a.get();
+  self.b.inc();
+  use(a);
+}
+```
+
+This way, when looking at `bar()` alone, we see borrows of `self.a`
+and `self.b`, rather than two borrows of `self`. Another technique is
+to introduce "free functions" (e.g., `get(&self.a)` and `inc(&mut
+self.b)`) that expose more clearly which fields are operated upon, or
+to inline the method bodies. This is a non-trivial bit of design and
+is out of scope for this RFC. See
+[this comment on an internals thread][cpb] for further thoughts.
+
+[cpb]: https://internals.rust-lang.org/t/partially-borrowed-moved-struct-types/5392/2
+
+**Self-referential structs.** The final limitation we are not fixing
+yet is the inability to have "self-referential structs". That is, you
+cannot have a struct that stores, within itself, an arena and pointers
+into that arena, and then move that struct around. This comes up in a
+number of settings.  There are various workarounds: sometimes you can
+use a vector with indices, for example, or
+[the `owning_ref` crate](https://crates.io/crates/owning_ref). The
+latter, when combined with [associated type constructors][ATC], might
+be an adequate solution for some uses cases, actually (it's basically
+a way of modeling "existential lifetimes" in library code). For the
+case of futures especially, [the `?Move` RFC][?Move] proposes another
+lightweight and interesting approach.
+
+[?Move]: https://github.com/rust-lang/rfcs/pull/1858
+
 # Endnotes
 
 <a name="temporaries"></a>
@@ -1968,4 +2044,5 @@ statement.
 [RFC 2025]: https://github.com/rust-lang/rfcs/pull/2025
 [smr]: https://github.com/Ericson2314/a-stateful-mir-for-rust
 [10520]: https://github.com/rust-lang/rust/issues/10520
+[ATC]: https://github.com/rust-lang/rfcs/pull/1598
 
