@@ -461,12 +461,14 @@ algorithm which then solves those constraints.
 
 We describe the design in "layers":
 
-1. Initially, we will describe a based design focused on control-flow within
-   one function.
-2. Next, we extend the design to handle dropck, and specifically the
+1. Initially, we will describe a based design focused on control-flow
+   within one function.
+2. Next, we extend the control-flow graph to better handle infinite loops. 
+3. Next, we extend the design to handle dropck, and specifically the
    `#[may_dangle]` attribute introduced by RFC 1327.
-3. Finally, we will extend the design to consider named lifetime parameters,
+4. Next, we will extend the design to consider named lifetime parameters,
    like those in problem case 3.
+5. Finally, we give a brief description of the borrow checker.
 
 ## Layer 0: Definitions
 
@@ -972,7 +974,7 @@ which are precisely the answers we expected:
     'foo = {A/1, B/0, C/0}
     'bar = {B/3, B/4, C/0}
 
-[dfs]: XXX
+[dfs]: https://github.com/nikomatsakis/nll/blob/1cff361c9aeb6f553b528078866f5717f1872dad/nll/src/infer.rs#L71-L113
 
 ### Intuition for why this algorithm is correct
 
@@ -1268,7 +1270,65 @@ include both halves of the `if`** -- because it is used after the `if`
 path. Thus even though `'vec` has to outlive `'p`, `'p` never winds up
 including the "else" branch thanks to location-aware subtyping.
 
-## Layer 2: Accomodating dropck
+## Layer 2: Avoiding infinite loops
+
+The previous design was described in terms of the "pure" MIR
+control-flow graph. However, using the raw graph has some undesirable
+properties around infinite loops. In such cases, the graph has no
+exit, which undermines the traditional definition of reverse analyses
+like liveness. To address this, when we build the control-flow graph
+for our functions, we will augment it with additional edges -- in
+particular, for every infinite loop (`loop { }`), we will add false
+"unwind" edges. This ensures that the control-flow graph has a final
+exit node (the success of the RETURN and RESUME nodes) that
+postdominates all other nodes in the graph.
+
+If we did not add such edges, the result would also allow a number of surprising
+program to type-check. For example, it would be possible to borrow local variables
+with `'static` lifetime, so long as the function never returned:
+
+```rust
+fn main() {
+  let x: usize;
+  let y: &'static x = &x;
+  loop { }
+}
+```
+
+This would work because (as covered in detail under the borrow check
+section) the `StorageDead(x)` instruction would never be reachable,
+and hence any lifetime of borrow would be acceptable. This further leads to
+other surprising programs that still type-check, such as this example which
+uses a (incorrect, but declared as unsafe) API for spawning threads:
+
+```rust
+let scope = Scope::new();
+let mut foo = 22;
+
+unsafe {
+  // dtor joins the thread
+  let _guard = scope.spawn(&mut foo);
+  loop {
+    foo += 1;
+  }
+  // drop of `_guard` joins the thread
+}
+```
+
+Without the unwind edges, this code would pass the borrowck, since the
+drop of `_guard` (and `StorageDead` instruction) is not reachable, and
+hence `_guard` is not considered live (after all, its destructor will
+indeed never run). However, this would permit the `foo` variable to be
+modified both during the infinite loop and by the thread launched by
+`scope.spawn()`, which was given access to an `&mut foo` reference
+(albeit one with a theoretically short lifetime).
+
+With the false unwind edge, the compiler essentially always assumes
+that a destructor *may* run, since every scope may theoretically
+execute. This extends the `&mut foo` borrow given to `scope.spawn()`
+to cover the body of the loop, resulting in a borrowck error.
+
+## Layer 3: Accomodating dropck
 
 MIR includes an action that corresponds to "dropping" a variable:
 
@@ -1339,7 +1399,7 @@ START {
 This poses no problem for our analysis, however, because `'slice` "may
 dangle" during the drop, and hence is not considered live.
 
-## Layer 3: Named lifetimes
+## Layer 4: Named lifetimes
 
 Until now, we've only considered lifetimes that are confined to the
 extent of a function. Often, of course, we want to reason about
@@ -1459,7 +1519,7 @@ NB: As of this writing, this part of the prototype is not fully
 implemented. [Issue #12](https://github.com/nikomatsakis/nll/issues/12) describes
 the current status.
 
-## Layer 4: How the borrow check works
+## Layer 5: How the borrow check works
 
 For the most part, the focus of this RFC is on the structure of
 lifetimes. But it's worth talking a bit about how to integrate
