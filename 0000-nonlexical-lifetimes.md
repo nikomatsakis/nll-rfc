@@ -13,9 +13,8 @@ new, more flexible regions, and also describes how to adjust our error
 messages. The RFC also describes a few other extensions to the borrow
 checker, the total effect of which is to eliminate many common cases
 where small, function-local requires would be required to pass the
-borrow check. (The "Future Work" section describes some of the
-remaining borrow-checker limitations that are not addressed by this
-RFC.)
+borrow check. (The appendix describes some of the remaining
+borrow-checker limitations that are not addressed by this RFC.)
 
 # Motivation
 [motivation]: #motivation
