@@ -27,7 +27,7 @@ is borrowed? The idea is quite simple: whenever you create a borrow,
 the compiler assigns the resulting reference a **lifetime**. This
 lifetime corresponds to the span of the code where the reference may
 be used. The compiler will infer this lifetime to be the smallest
-lifetime that it can that still encompasses all the uses of the
+lifetime that it can have that still encompasses all the uses of the
 reference.
 
 Note that Rust uses the term lifetime in a very particular way.  In
@@ -142,11 +142,11 @@ solution.
 
 ## Problem case #2: conditional control flow
 
-Another common problem case is when references are used in only match
-arm (or, more generally, one control-flow path). This most commonly
-arises around maps. Consider this function, which, given some `key`,
-processes the value found in `map[key]` if it exists, or else inserts
-a default value:
+Another common problem case is when references are used in only one
+given match arm (or, more generally, one control-flow path). This most
+commonly arises around maps. Consider this function, which, given some
+`key`, processes the value found in `map[key]` if it exists, or else
+inserts a default value:
 
 ```rust
 fn process_or_default() {
