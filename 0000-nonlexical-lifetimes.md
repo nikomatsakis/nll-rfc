@@ -173,8 +173,8 @@ but also the `None` branch, and hence when we go to insert into the
 map in the `None` branch, we get an error that the `map` is still
 borrowed.
 
-This *particular* example is relatively easy to workaround. One can
-(frequently) move the code for `None` out from the `match` like so:
+This *particular* example is relatively easy to workaround. In many cases,
+one can move the code for `None` out from the `match` like so:
 
 ```rust
 fn process_or_default1() {
@@ -1341,7 +1341,7 @@ value resides (if the variable -- or parts of the variable -- have
 already been dropped, then drop has no effect; this is not relevant to
 the current analysis).
 
-Interestingly, dropping a value frequently does not require that the
+Interestingly, in many cases dropping a value does not require that the
 lifetimes in the dropped value be valid. After all, dropping a
 reference of type `&'a T` or `&'a mut T` is defined as a no-op, so it
 does not matter if the reference points at valid memory. In cases like
