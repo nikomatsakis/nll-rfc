@@ -764,7 +764,7 @@ subtyping constraint as follows:
     (&'foo T <: &'p T) @ A/1
     
 The standard Rust subtyping rules (two examples of which are given
-below) can then "breakdown" this subtyping rule into the lifetime
+below) can then "break down" this subtyping rule into the lifetime
 constraints we need for inference:
 
     (T_a <: T_b) @ P
