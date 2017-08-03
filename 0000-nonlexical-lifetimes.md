@@ -305,7 +305,7 @@ inside of an `if`, and we have set things up so that the if body
 unconditionally returns. What this means is that a borrow begins at
 the point of `get_mut`, and that borrow lasts until the point `'r` in
 the caller, but the borrow checker can see that this borrow *will not
-have even started* outside of the `if`. So it does not consider the
+have even started* outside of the `if`. It does not consider the
 borrow in scope at the point where we call `map.insert`.
 
 This workaround is more troublesome than the others, because the
@@ -478,8 +478,8 @@ complexity.
 
 **Lvalues**. A MIR "lvalue" is a path that leads to a memory location.
 The full MIR Lvalues are defined [via a Rust enum][lvaluecode] and
-contain a number of knobs, most of which are not relevant for this RFC. So
-we will present a simplified form of lvalues for now:
+contain a number of knobs, most of which are not relevant for this RFC.
+We will present a simplified form of lvalues for now:
 
 ```
 LV = x       // local variable
@@ -491,7 +491,7 @@ The precedence of `*` is low, so `*a.b.c` will deref `a.b.c`; to deref
 just `a`, one would write `(*a).b.c`.
 
 **Prefixes.** We say that the prefixes of an lvalue are all the
-lvalues you get by stripping away fields and derefs. So the prefixes
+lvalues you get by stripping away fields and derefs. The prefixes
 of `*a.b` would be `*a.b`, `a.b`, and `a`.
 
 [lvaluecode]: https://github.com/rust-lang/rust/blob/bf0a9e0b4d3a4dd09717960840798e2933ec7568/src/librustc/mir/mod.rs#L839-L851
@@ -583,7 +583,7 @@ C      v
 ```
 
 We will use a notation like `Block/Index` to refer to a specific
-statement or terminate in the control-flow graph. So `A/0` and `B/4`
+statement or terminate in the control-flow graph. `A/0` and `B/4`
 refer to `p = &foo` and `goto C`, respectively.
 
 ### What is a lifetime and how does it interact with the borrow checker
@@ -867,7 +867,7 @@ use(r_b);
 In this case, the supporting prefixes of `*r_a` are `*r_a` and `r_a`
 (because `r_a` is a mutable reference, we recurse). Only one of those,
 `*r_a`, is a deref lvalue, and the reference `r_a` being dereferenced
-hs the lifetime `'a`. So we would add the constraint that `'a: 'b`,
+hs the lifetime `'a`. We would add the constraint that `'a: 'b`,
 thus ensuring that `foo` is considered borrowed so long as `r_b` is in
 use. Without this constraint, the lifetime `'a` would end after the
 second borrow, and hence `foo` would be considered unborrowed, even
