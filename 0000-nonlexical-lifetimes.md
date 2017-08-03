@@ -1497,7 +1497,7 @@ which case edges in only one direction are needed.  This models the
 possibility that *either* `'a` or `'b` could end first.
 
 (Note that the CFGs we will build, like all CFGs, overapproximates the
-possible control-flows: it permits describes either `'a` or `'b` to
+possible control-flows: it permits either `'a` or `'b` to
 end first, but since one could traverse over the cycles, it would also
 permit `'a` to "end" multiple times and so forth. This should be ok --
 the analysis cares only about that we include all possible paths; it
