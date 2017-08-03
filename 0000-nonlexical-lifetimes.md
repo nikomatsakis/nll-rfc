@@ -41,7 +41,7 @@ similar -- ways:
    destructor for the value runs).
 
 This second span of time, which describes how long a value is valid,
-is of course very important. To distinguish the two, we refer to that
+is very important. To distinguish the two, we refer to that
 second span of time as the value's **scope**. Naturally, lifetimes and
 scopes are linked to one another. Specifically, if you make a
 reference to a value, the lifetime of that reference cannot outlive
@@ -136,7 +136,7 @@ fn bar() {
 ```
 
 Since we introduced a new block, the scope of `slice` is now smaller,
-and hence the resulting lifetime is smaller. Of course, introducing a
+and hence the resulting lifetime is smaller. Introducing a
 block like this is kind of artificial and also not an entirely obvious
 solution.
 
@@ -194,7 +194,7 @@ fn process_or_default1() {
 
 When the code is adjusted this way, the call to `map.insert` is not
 part of the match, and hence it is not part of the borrow.  While this
-works, it is of course unfortunate to require these sorts of
+works, it is unfortunate to require these sorts of
 manipulations, just as it was when we introduced an artificial block
 in the previous example.
 
@@ -1401,7 +1401,7 @@ dangle" during the drop, and hence is not considered live.
 ## Layer 4: Named lifetimes
 
 Until now, we've only considered lifetimes that are confined to the
-extent of a function. Often, of course, we want to reason about
+extent of a function. Often, we want to reason about
 lifetimes that begin or end after the current function has ended. More
 subtle, we sometimes want to have lifetimes that sometimes begin and
 end in the current function, but which may (along some paths) extend
