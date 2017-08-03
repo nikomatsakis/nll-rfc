@@ -1504,7 +1504,7 @@ the analysis cares only about that we include all possible paths; it
 is also permitted to include other paths that will never *actually*
 occur in practice.)
 
-Once we have extended the CFG, we can handle map every reference to a
+Once we have extended the CFG, we can map every reference to a
 named region like `'a` as being the set of nodes that begins with
 START and includes the end point of `'a`, but excludes the end points
 of every other region `'x`, unless `'a: 'x` is known to hold. So, in
