@@ -1699,8 +1699,8 @@ all errors in terms of three points:
 - The point where the resulting reference is used (U).
 - An intervening point that might have invalidated the reference (A).
 
-We should select three points such that B can reach U and U can reach
-A. In general, the approach is to describe the errors in "narrative" form:
+We should select three points such that B can reach A and A can reach
+U. In general, the approach is to describe the errors in "narrative" form:
 
 - First, value is borrowed occurs.
 - Next, the action occurs, invalidating the reference.
