@@ -1980,7 +1980,7 @@ for connecting the type of a variable between distinct points). It is
 also a more natural fit for the surface language, in which variables
 have a single type.
 
-### Different "lifetime roles
+### Different "lifetime roles"
 
 In the discussion about nested method calls ([RFC 2025], and the
 discussions that led up to it), there were various proposals that were
@@ -1993,7 +1993,7 @@ Vec::push(tmp0, tmp1);
 ```
 
 The alternatives to RFC 2025 were focused on augmenting the type of
-references to have distinct "roles' -- the most prominent such
+references to have distinct "roles" -- the most prominent such
 proposal was `Ref2<'r, 'w>`, in which mutable references change to
 have two distinct lifetimes, a "read" lifetime (`'r`) and a "write"
 lifetime (`'w`), where read encompasses the entire span of the
