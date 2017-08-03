@@ -1403,7 +1403,7 @@ dangle" during the drop, and hence is not considered live.
 Until now, we've only considered lifetimes that are confined to the
 extent of a function. Often, of course, we want to reason about
 lifetimes that begin or end after the current function has ended. More
-subtle, we sometimes want to have lifetimes that sometimes begin and
+subtly, we sometimes want to have lifetimes that sometimes begin and
 end in the current function, but which may (along some paths) extend
 into the caller. Consider Problem Case #3 (the corresponding test case
 in the prototype is the [get-default][] test):
