@@ -1928,7 +1928,7 @@ approaches to describing NLL were tried and discarded.
 **RFC 396.** [RFC 396][] defined lifetimes to be a "prefix" of the
 dominator tree -- roughly speaking, a single-entry, multiple-exit
 region of the control-flow graph. Unlike our system, this definition
-did not permit gaps or holes in a lifetime. Ensuring continuous was
+did not permit gaps or holes in a lifetime. Ensuring continuous lifetimes was
 meant to guarantee soundness; in this RFC, we use the liveness
 constraints to achieve a similar effect. This more flexible setup
 allows us to handle cases like Problem Case #3, which RFC 396 would
