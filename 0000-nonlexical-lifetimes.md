@@ -1345,8 +1345,8 @@ Interestingly, dropping a value frequently does not require that the
 lifetimes in the dropped value be valid. After all, dropping a
 reference of type `&'a T` or `&'a mut T` is defined as a no-op, so it
 does not matter if the reference points at valid memory. In cases like
-this, we say that the lifetime `'a` **may dangle**, referring to the C
-term "dangling pointer", which means a pointer to freed or invalid
+this, we say that the lifetime `'a` **may dangle**. This is inspired by the C
+term "dangling pointer" which means a pointer to freed or invalid
 memory.
 
 However, if that same reference is stored in the field of a struct
