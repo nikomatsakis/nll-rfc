@@ -1712,7 +1712,7 @@ mention this third point, where the next use occurs. Note that the
 conceptually, is to perform an invalidating action in between two uses
 of the reference (rather than, say, to use the reference after an
 invalidating action). This actually reflects the definition of
-undefiend behavior more accurately (that is, performing an illegal
+undefined behavior more accurately (that is, performing an illegal
 write is what causes undefined behavior, but the write is illegal
 because of the latter use).
 
