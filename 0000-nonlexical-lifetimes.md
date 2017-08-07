@@ -423,8 +423,10 @@ borrowed reference. This RFC proposes a tweak to address that.
 This RFC proposes a more flexible model for lifetimes. Whereas
 previously lifetimes were based on the abstract syntax tree, we now
 propose lifetimes that are defined via the control-flow graph. More
-specifically, lifetimes will be derived based on the MIR
-representation used internally in the compiler.
+specifically, lifetimes will be derived based on the [MIR][MIR-details]
+used internally in the compiler.
+
+[MIR-details]: https://blog.rust-lang.org/2016/04/19/MIR.html
 
 Intuitively, in the new proposal, the lifetime of a reference lasts
 only for those portions of the function in which the reference may
