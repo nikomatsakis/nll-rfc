@@ -550,9 +550,9 @@ print(*p);
 ```
 
 The key point of this example is that the variable `foo` should only
-be considered borrowed at points 0, 3, and 4, but not point 1. `bar`,
+be considered borrowed at points 0 and 3, but not point 1. `bar`,
 in contrast, should be considered borrowed at points 2 and 3. Neither
-them need to be considered borrowed at point 4, as the reference `p`
+of them need to be considered borrowed at point 4, as the reference `p`
 is not used there.
 
 We can concert this example into the control-flow graph that follows.
