@@ -338,7 +338,7 @@ place!)
 The current borrow checker forbids reassigning an `&mut` variable `x`
 when the referent (`*x`) has been borrowed. This most commonly arises
 when writing a loop that progressively "walks down" a data structure.
-Consider this function, which converts a simple linked list `&mut List<T>`
+Consider this function, which converts a linked list `&mut List<T>`
 into a `Vec<&mut T>`:
 
 ```rust
@@ -668,7 +668,7 @@ and the notation `'a` refers to some named lifetime inference variable
 (e.g., `'p`, `'foo` or `'bar`).
 
 Once the constraints are created, the **inference algorithm** solves
-the constraints. This is done via a simple fixed-point iteration: each
+the constraints. This is done via fixed-point iteration: each
 lifetime variable begins as an empty set and we iterate over the
 constaints, repeatedly growing the lifetimes until they are big enough
 to satisfy all constraints.
@@ -946,7 +946,7 @@ use" (and hence their "locks" still enforced).
 ### Solving constraints
 
 Once the constraints are created, the **inference algorithm** solves
-the constraints. This is done via a simple fixed-point iteration: each
+the constraints. This is done via fixed-point iteration: each
 lifetime variable begins as an empty set and we iterate over the
 constaints, repeatedly growing the lifetimes until they are big enough
 to satisfy all constraints.
@@ -1364,7 +1364,7 @@ a type may dangle during drop and which may not. We integrate those
 rules into our liveness analysis as follows: the MIR instruction
 `DROP(variable)` is not treated like other MIR instructions when it
 comes to liveness. In a sense, conceptually we run two distinct liveness analysis (in practice, the prototype
-simply uses two bits per variable):
+uses two bits per variable):
 
 1. The first, which we've already seen, indicates when a variable's
    current value may be **used** in the future. This corresponds to
@@ -1513,7 +1513,7 @@ of every other region `'x`, unless `'a: 'x` is known to hold. So, in
 our example above, we would map references to `'r` to be the set
 `{START/*, SOME/*, NONE/*, END/*, END_R/0}`; this set does not include
 `STATIC/0` since `'r: 'static` is not known to hold. References to
-`'static` would simple include all the points in the control-flow
+`'static` would include all the points in the control-flow
 graph.
 
 NB: As of this writing, this part of the prototype is not fully
