@@ -1204,7 +1204,7 @@ rules were replaced with transformations such as SSA form. The
 vec-push-ref example demonstrates the value of location-aware
 subtyping in contrast to these approaches.
 
-```
+```rust
 let foo: i32;
 let vec: Vec<&'vec i32>;
 let p: &'p i32;
@@ -1720,7 +1720,7 @@ because of the latter use).
 
 To see the difference, consider this erroneous program:
 
-```
+```rust
 fn main() {
     let mut i = 3;
     let x = &i;
@@ -1851,7 +1851,7 @@ question is used.
 
 Consider this example:
 
-```
+```rust
 let p;
 {
     let x = 3;
@@ -1950,7 +1950,7 @@ indirectly (e.g., via `&mut`).  If we were to apply SSA to MIR in a
 naive fashion, then, it would ignore these assignments when creating
 numberings. For example:
 
-```
+```rust
 let mut x = 1;      // x0, has value 1
 let mut p = &mut x; // p0
 *p += 1;
