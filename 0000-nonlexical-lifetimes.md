@@ -793,7 +793,7 @@ These can be converted into the following lifetime constraints:
     
 ### Reborrow constraints
 
-There is one final source of constraints. It frequently happen that we
+There is one final source of constraints. It frequently happens that we
 have a borrow expression that is "reborrowing" the referent of an
 existing reference:
 
