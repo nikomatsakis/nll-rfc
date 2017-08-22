@@ -557,7 +557,7 @@ in contrast, should be considered borrowed at points 2 and 3. Neither
 of them need to be considered borrowed at point 4, as the reference `p`
 is not used there.
 
-We can concert this example into the control-flow graph that follows.
+We can convert this example into the control-flow graph that follows.
 Recall that a control-flow graph in MIR consists of basic blocks
 containing a list of discrete statements and a trailing terminator:
 
