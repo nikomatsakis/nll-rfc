@@ -1552,7 +1552,7 @@ the CFG, the set of in-scope **loans**. A "loan" is represented as a tuple
 2. whether this was a shared, unique, or mutable loan;
     - "unique" loans are exactly like mutable loans, but they do not permit
       mutation of their referents. They are used only in closure desugarings
-      and are not part of the Rust's surface syntax.
+      and are not part of Rust's surface syntax.
 3. the lvalue that was borrowed (e.g., `x` or `(*x).foo`).
 
 The set of in-scope loans at each point is found via a fixed-point
