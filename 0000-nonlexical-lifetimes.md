@@ -22,7 +22,7 @@ borrow-checker limitations that are not addressed by this RFC.)
 ## What is a lifetime?
 
 The basic idea of the borrow checker is that values may not be mutated
-or moved while they are borrowed. But how do we know whether a value
+or moved while they are borrowed, but how do we know whether a value
 is borrowed? The idea is quite simple: whenever you create a borrow,
 the compiler assigns the resulting reference a **lifetime**. This
 lifetime corresponds to the span of the code where the reference may
@@ -225,7 +225,7 @@ fn get_default<'r,K,V:Default>(map: &'r mut HashMap<K,V>,
 ```
 
 At first glance, this code appears quite similar the code we saw
-before. And indeed, just as before, it will not compile. But in fact
+before, and indeed, just as before, it will not compile. In fact,
 the lifetimes at play are quite different. The reason is that, in the
 `Some` branch, the value is being **returned out** to the caller.
 Since `value` is a reference into the map, this implies that the `map`
@@ -711,7 +711,7 @@ that `p` becomes **dead** (not live) in the span before it is
 reassigned.  This is true even though the variable `p` will be used
 again, because the **value** that is in `p` will not be used.
 
-Traditional compiler compute liveness based on variables. But we wish
+Traditional compiler compute liveness based on variables, but we wish
 to compute liveness for **lifetimes**. We can extend a variable-based
 analysis to lifetimes by saying that a lifetime L is live at a point P
 if there is some variable `p` which is live at P, and L appears in the
@@ -731,7 +731,7 @@ then we will introduce a constraint like:
     (L: {P}) @ P
 
 (As we'll see later when we cover solving constraints, this constraint
-effectively just inserts `P` into the set for `L`. And in fact the
+effectively just inserts `P` into the set for `L`. In fact, the
 prototype doesn't bother to materialize such constraints, instead just
 immediately inserting `P` into `L`.)
 
@@ -1523,7 +1523,7 @@ the current status.
 ## Layer 5: How the borrow check works
 
 For the most part, the focus of this RFC is on the structure of
-lifetimes. But it's worth talking a bit about how to integrate
+lifetimes, but it's worth talking a bit about how to integrate
 these non-lexical lifetimes into the borrow checker. In particular,
 along the way, we'd like to fix two shortcomings of the borrow checker:
 
