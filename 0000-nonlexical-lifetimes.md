@@ -869,7 +869,7 @@ use(r_b);
 In this case, the supporting prefixes of `*r_a` are `*r_a` and `r_a`
 (because `r_a` is a mutable reference, we recurse). Only one of those,
 `*r_a`, is a deref lvalue, and the reference `r_a` being dereferenced
-hs the lifetime `'a`. We would add the constraint that `'a: 'b`,
+has the lifetime `'a`. We would add the constraint that `'a: 'b`,
 thus ensuring that `foo` is considered borrowed so long as `r_b` is in
 use. Without this constraint, the lifetime `'a` would end after the
 second borrow, and hence `foo` would be considered unborrowed, even
