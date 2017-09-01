@@ -345,7 +345,7 @@ into a `Vec<&mut T>`:
 struct List<T> {
     value: T,
     next: Option<Box<List<T>>>
-}b
+}
 
 fn to_refs<T>(mut list: &mut List<T>) -> Vec<&mut T> {
     let mut result = vec![];
@@ -462,7 +462,7 @@ algorithm which then solves those constraints.
 
 We describe the design in "layers":
 
-1. Initially, we will describe a based design focused on control-flow
+1. Initially, we will describe a basic design focused on control-flow
    within one function.
 2. Next, we extend the control-flow graph to better handle infinite loops. 
 3. Next, we extend the design to handle dropck, and specifically the
