@@ -1855,6 +1855,38 @@ borrow is never used again.)
 There are some cases where the three points are not all visible
 in the user syntax where we may need some careful treatment.
 
+### Drop as last use
+
+There are times when the last use of a variable will in fact be its
+destructor. Consider an example like this:
+
+```rust
+struct Foo<'a> { field: &'a u32 }
+impl<'a> Drop for Foo<'a> { .. }
+
+fn main() {
+    let mut x = 22;
+    let y = Foo { field: &x };
+    x += 1;
+}
+```
+
+This code would be legal, but for the destructor on `y`, which will
+implicitly execute at the end of the enclosing scope. The error
+message might be shown as follows:
+
+```
+error[E0506]: cannot write to `x` while borrowed
+ --> <anon>:4:5
+   |
+ 6 |     let y = Foo { field: &x };
+   |                          -- borrow of `x` occurs here
+ 7 |     x += 1;
+   |     ^ write to `x` occurs here, while borrow is still active
+ 8 | }
+   | - borrow is later used here, when `y` is dropped
+```
+
 ### Method calls
 
 One example would be method calls:
