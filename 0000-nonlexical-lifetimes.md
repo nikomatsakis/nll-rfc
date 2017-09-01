@@ -1457,68 +1457,53 @@ The key to this example is that the first borrow of `map`, with the
 lifetime `'m1`, must extend to the end of the `'r`, but only if we
 branch to SOME. Otherwise, it should end once we enter the NONE block.
 
-To accommodate cases like this, we will extend the control-flow graph
-with additional nodes representing the **end-points** of each named
-lifetime (in other words, representing spans of time in the
-caller(s)). So, we can amend the control-flow graph above to something
-like this:
+To accommodate cases like this, we will extend the notion of a region
+so that it includes not only points in the control-flow graph, but
+also includes a (possibly empty) set of "end regions" for various
+named lifetimes.  We denote these as `end('r)` for some named region
+`'r`. The region `end('r)` can be understood semantically as referring
+to some portion of the caller's control-flow graph (actually, they
+could extend beyond the end of the caller, into the caller's caller,
+and so forth, but that doesn't concern us). This new region might then
+be denoted as the following (in pseudocode form):
 
-```
-// ... same as before up until the END block:
-
-block END {
-  goto END_R;
-}
-
-block END_R { // end of the `'r` lifetime
-  goto STATIC_R;
-}
-
-block STATIC_R { // end of the `'static` lifetime
+```rust
+struct Region {
+  points: Set<Point>,
+  end_regions: Set<NamedLifetime>,
 }
 ```
 
-The idea here is that these new blocks, `END_R` and `STATIC_R`,
-represent the points in the caller (or caller's caller, etc) where
-each of the named lifetime parameters will end. The edges between them
-represent the outlives relationships that we know of (so `END_R ->
-STATIC_R` because `'static` outlives `'r`). Now we can represent the
-lifetime `'m1` as the set `{START/1, START/2, SOME/0, SOME/1, END/0,
-END_R/0}` -- note that it includes the point `END_R/0`, which means
-that it must be valid up until the end of `'r`. However, it does *not*
-include the path `NONE/0`, even though `NONE/0` can reach `END_R/0`;
-this is another instance of the ability for lifetimes to contain
-"gaps". The lifetime `'m2`, covering the second borrow, will be
-inferred to `{NONE/2, NONE/3, NONE/4, END/0, END_R/0}`.
+In this case, when a type mentions a named lifetime, such as `'r`, that
+can be represented by a region that includes:
 
-In general, we need to insert pessimistic edges between named
-lifetimes.  Put another way, for any two named lifetimes `'a` and
-`'b`, there should be edges between their corresponding end points
-`END_A` and `END_B` unless we know that `'a: 'b` or vice versa, in
-which case edges in only one direction are needed.  This models the
-possibility that *either* `'a` or `'b` could end first.
+- the entire CFG,
+- and, the end region for that named lifetime (`end('r)`).
 
-(Note that the CFGs we will build, like all CFGs, overapproximates the
-possible control-flows: it permits either `'a` or `'b` to
-end first, but since one could traverse over the cycles, it would also
-permit `'a` to "end" multiple times and so forth. This should be ok --
-the analysis cares only about that we include all possible paths; it
-is also permitted to include other paths that will never *actually*
-occur in practice.)
+Furthermore, we can **elaborate** the set to include `end('x)` for
+every named lifetime `'x` such that `'r: 'x`. This is because, if `'r:
+'x`, then we know that `'r` doesn't end up until `'x` has already
+ended.
 
-Once we have extended the CFG, we can map every reference to a
-named region like `'a` as being the set of nodes that begins with
-START and includes the end point of `'a`, but excludes the end points
-of every other region `'x`, unless `'a: 'x` is known to hold. So, in
-our example above, we would map references to `'r` to be the set
-`{START/*, SOME/*, NONE/*, END/*, END_R/0}`; this set does not include
-`STATIC/0` since `'r: 'static` is not known to hold. References to
-`'static` would include all the points in the control-flow
-graph.
+Finally, we must adjust our definition of subtyping to accommodate
+this amended definition of a region, which we do as follows. When we have
+an outlives relation 
 
-NB: As of this writing, this part of the prototype is not fully
-implemented. [Issue #12](https://github.com/nikomatsakis/nll/issues/12) describes
-the current status.
+    'b: 'a @ P
+    
+where the end point of the CFG is reachable from P without leaving
+`'a`, the existing inference algorithm would simply add the end-point
+to `'b` and stop. The new algorithm would also add any end regions
+that are included `'a` to `'b` at that time. (Expressing less
+operationally, `'b` only outlives `'a` if it also includes the
+end-regions that `'a` includes, presuming that the end point of the
+CFG is reachable from P). The reason that we require the end point of
+the CFG to be reachable is because otherwise the data never escapes
+the current function, and hence the named lifetimes are not relevant.
+
+NB: This part of the prototype is partially
+implemented. [Issue #12](https://github.com/nikomatsakis/nll/issues/12)
+describes the current status and links to the in-progress PRs.
 
 ## Layer 5: How the borrow check works
 
