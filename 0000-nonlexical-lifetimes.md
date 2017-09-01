@@ -1623,6 +1623,19 @@ straightforward:
     - Note that moves count as "deep writes".
   - A shared borrow `&LV` counts as a **deep read**.
   - A mutable borrow `&mut LV` counts as **deep write**.
+  
+There are a few interesting cases to keep in mind:
+
+- MIR models discriminants more precisely. They should probably be
+  thought of as a distinct *field* when it comes to borrows (although
+  it may be equivalent to treat a load of the discriminant as a kind
+  of shallow read).
+- In the compiler today, `Box` is still "built-in" to MIR. This RFC
+  ignores that possibility and instead acts as though borrowed
+  references (`&` and `&mut`) and raw pointers (`*const` and `*mut`)
+  were the only sorts of pointers.  It should be straight-forward to
+  extend the text here to cover `Box`, though some questions arise
+  around the handling of drop (see the section on drops for details).
 
 **Accessing an lvalue LV.** When accessing an lvalue LV, there are two
 axes to consider:
