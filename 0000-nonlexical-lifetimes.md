@@ -344,7 +344,7 @@ into a `Vec<&mut T>`:
 ```rust
 struct List<T> {
     value: T,
-    next: Option<Box<List<T>>>
+    next: Option<Box<List<T>>>,
 }
 
 fn to_refs<T>(mut list: &mut List<T>) -> Vec<&mut T> {
@@ -410,7 +410,7 @@ fn to_refs<T>(mut list: &mut List<T>) -> Vec<&mut T> {
 
 When you frame the program this way, the borrow checker sees that
 `(*list1).value` is borrowed (not `list`). This does not prevent us
-from later assigning to `list`. 
+from later assigning to `list`.
 
 Clearly this workaround is annoying. The problem here, it turns out,
 is not specific to non-lexical lifetimes per se. Rather, it is that
@@ -464,7 +464,7 @@ We describe the design in "layers":
 
 1. Initially, we will describe a basic design focused on control-flow
    within one function.
-2. Next, we extend the control-flow graph to better handle infinite loops. 
+2. Next, we extend the control-flow graph to better handle infinite loops.
 3. Next, we extend the design to handle dropck, and specifically the
    `#[may_dangle]` attribute introduced by RFC 1327.
 4. Next, we will extend the design to consider named lifetime parameters,
@@ -517,7 +517,7 @@ three categories:
 - `StorageDead(x)` deallocates the stack storage for `x`. These are used by LLVM to allow
   stack-allocated values to use the same stack slot (if their live storage ranges are disjoint).
   [Ralf Jung's recent blog post has more details.][rjung-sd]
-  
+
 [rjung-sd]: https://www.ralfj.de/blog/2017/06/06/MIR-semantics.html
 [rvalue]: https://github.com/rust-lang/rust/blob/bf0a9e0b4d3a4dd09717960840798e2933ec7568/src/librustc/mir/mod.rs#L1037-L1071
 [bbdata]: https://github.com/rust-lang/rust/blob/bf0a9e0b4d3a4dd09717960840798e2933ec7568/src/librustc/mir/mod.rs#L443-L463
@@ -764,7 +764,7 @@ because the new value of `p` is first visible in A/1). We write that
 subtyping constraint as follows:
 
     (&'foo T <: &'p T) @ A/1
-    
+
 The standard Rust subtyping rules (two examples of which are given
 below) can then "break down" this subtyping rule into the lifetime
 constraints we need for inference:
@@ -790,7 +790,7 @@ These can be converted into the following lifetime constraints:
 
     ('foo: 'p) @ A/1
     ('bar: 'p) @ B/3
-    
+
 ### Reborrow constraints
 
 There is one final source of constraints. It frequently happens that we
@@ -865,7 +865,7 @@ let r_b: &'b mut i32 = &'b mut *r_a;
 ...
 use(r_b);
 ```
-    
+
 In this case, the supporting prefixes of `*r_a` are `*r_a` and `r_a`
 (because `r_a` is a mutable reference, we recurse). Only one of those,
 `*r_a`, is a deref lvalue, and the reference `r_a` being dereferenced
@@ -887,7 +887,7 @@ let r_c: &'c i32     = &'c **r_b;
 // What is considered borrowed here?
 use(r_c);
 ```
-    
+
 Just as before, it is important that, so long as `r_c` is in use,
 `foo` is considered borrowed. However, what about the variable `r_a`:
 should *it* considered borrowed? The answer is no: once `r_c` is
@@ -967,7 +967,7 @@ In our example, the full set of constraints is:
     ('p: {B/3}) @ B/3
     ('p: {B/4}) @ B/4
     ('p: {C/0}) @ C/0
-    
+
 Solving these constraints results in the following lifetimes,
 which are precisely the answers we expected:
 
@@ -1016,7 +1016,7 @@ through an alias (or move):
     R2 = R;  // last use of R, point A
     ...
     use(R2); // point Q
-    
+
 In this case, the liveness rules along do not suffice. The problem is
 that the `R2 = R` assignment may well be the last use of R, and so the
 **variable** R is dead at this point. However, the *value* in R will
@@ -1043,7 +1043,7 @@ when the same variable is used and overwritten multiple times:
     ...
     R2 = &H2; // point P2
     use(R2);  // point Q2
-  
+
 In this example, the liveness constraints on R2 will ensure that L2
 (the lifetime in its type) includes Q1 and Q2 (because R2 is live at
 those two points), but not the "..." nor the points P1 or P2. Note
@@ -1133,7 +1133,7 @@ The following liveness constraints are generated:
     ('tmp0: {START/4}) @ START/4
     ('tmp2: {SOME/0}) @ SOME/0
     ('value: {SOME/1}) @ SOME/1
-    
+
 The following subtyping-based constraints are generated:
 
     ('map: 'tmp0) @ START/3
@@ -1204,7 +1204,7 @@ rules were replaced with transformations such as SSA form. The
 vec-push-ref example demonstrates the value of location-aware
 subtyping in contrast to these approaches.
 
-```
+```rust
 let foo: i32;
 let vec: Vec<&'vec i32>;
 let p: &'p i32;
@@ -1228,18 +1228,18 @@ block START {
     p = &'foo foo;
     goto B C;
 }
-            
+
 block B {
     vec.push(p);
     goto EXIT;
 }
-                    
-block C {    
+
+block C {
     // Key point: `foo` not borrowed here
     use(vec);
     goto EXIT;
 }
-                                
+
 block EXIT {
 }
 ```
@@ -1290,9 +1290,9 @@ with `'static` lifetime, so long as the function never returned:
 
 ```rust
 fn main() {
-  let x: usize;
-  let y: &'static x = &x;
-  loop { }
+    let x: usize;
+    let y: &'static x = &x;
+    loop { }
 }
 ```
 
@@ -1307,12 +1307,12 @@ let scope = Scope::new();
 let mut foo = 22;
 
 unsafe {
-  // dtor joins the thread
-  let _guard = scope.spawn(&mut foo);
-  loop {
-    foo += 1;
-  }
-  // drop of `_guard` joins the thread
+    // dtor joins the thread
+    let _guard = scope.spawn(&mut foo);
+    loop {
+        foo += 1;
+    }
+    // drop of `_guard` joins the thread
 }
 ```
 
@@ -1445,12 +1445,12 @@ block NONE {
   m2 = &'m2 mut *map;  // temporary created for `map.get_mut()` call
   v = Map::get_mut(m2, &key);
   return = ... // "unwrap" of `v`
-  goto END; 
+  goto END;
 }
 
 block END {
   return;
-}  
+}
 ```
 
 The key to this example is that the first borrow of `map`, with the
@@ -1720,7 +1720,7 @@ because of the latter use).
 
 To see the difference, consider this erroneous program:
 
-```
+```rust
 fn main() {
     let mut i = 3;
     let x = &i;
@@ -1746,7 +1746,7 @@ U. Moreover, the "blame" is placed on the assignment. Under this RFC,
 we would display the error as follows:
 
 ```
-error[E0506]: cannot write to `i` while borrowed 
+error[E0506]: cannot write to `i` while borrowed
  --> <anon>:4:5
    |
  3 |     let x = &i;
@@ -1851,7 +1851,7 @@ question is used.
 
 Consider this example:
 
-```
+```rust
 let p;
 {
     let x = 3;
@@ -1891,10 +1891,10 @@ to the interaction with function signatures. For example:
 
 ```rust
 impl Foo {
-  fn foo(&self, y: &u8) -> &u8 {
-    x
-  }
-}  
+    fn foo(&self, y: &u8) -> &u8 {
+        x
+    }
+}
 ```
 
 We already have work-in-progress on presenting these sorts of errors
@@ -1950,7 +1950,7 @@ indirectly (e.g., via `&mut`).  If we were to apply SSA to MIR in a
 naive fashion, then, it would ignore these assignments when creating
 numberings. For example:
 
-```
+```rust
 let mut x = 1;      // x0, has value 1
 let mut p = &mut x; // p0
 *p += 1;
@@ -1986,7 +1986,7 @@ have a single type.
 
 In the discussion about nested method calls ([RFC 2025], and the
 discussions that led up to it), there were various proposals that were
-aimed at accepting the naive desugaring of a call like `vec.push(vec.len())`: 
+aimed at accepting the naive desugaring of a call like `vec.push(vec.len())`:
 
 ```rust
 let tmp0 = &mut vec;
@@ -2046,13 +2046,13 @@ these two methods cannot be used "in parallel" with one another:
 
 ```rust
 impl Foo {
-  fn get_a(&self) -> &A { &self.a }
-  fn inc_b(&mut self) { self.b.value += 1; }
-  fn bar(&mut self) {
-    let a = self.get_a();
-    self.inc_b(); // Error: self is already borrowed
-    use(a);
-  }
+    fn get_a(&self) -> &A { &self.a }
+    fn inc_b(&mut self) { self.b.value += 1; }
+    fn bar(&mut self) {
+        let a = self.get_a();
+        self.inc_b(); // Error: self is already borrowed
+        use(a);
+    }
 }
 ```
 
@@ -2062,9 +2062,9 @@ methods on the fields themselves:
 
 ```rust
 fn bar(&mut self) {
-  let a = self.a.get();
-  self.b.inc();
-  use(a);
+    let a = self.a.get();
+    self.b.inc();
+    use(a);
 }
 ```
 
@@ -2106,4 +2106,3 @@ statement.
 [smr]: https://github.com/Ericson2314/a-stateful-mir-for-rust
 [10520]: https://github.com/rust-lang/rust/issues/10520
 [ATC]: https://github.com/rust-lang/rfcs/pull/1598
-
