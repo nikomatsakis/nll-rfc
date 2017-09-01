@@ -1602,12 +1602,10 @@ section.
 At this point, we have computed which loans are in scope at each
 point. Next, we traverse the MIR and identify actions that are illegal
 given the loans in scope. Rather than go through every kind of MIR statement,
-we can break things down into four kinds of actions that can be performed:
+we can break things down into two kinds of actions that can be performed:
 
-- Moving an lvalue
-- Reading an lvalue
-- Writing an lvalue
-- Killing the storage for a local variable (i.e., `StorageDead`)
+- Accessing an lvalue, which we categorize along two axes (shallow vs deep, read vs write)
+- Dropping an lvalue
 
 For each of these kinds of actions, we will specify below the rules
 that determine when they are legal, given the set of loans L in scope
@@ -1617,51 +1615,97 @@ checking, given the in-scope loans, whether the actions it performs
 are legal. Translating MIR statements into actions is mostly
 straightforward:
 
-- A drop statement counts as a **move**.
-- A `StorageDead` statement counts as **killing the storage** (and indeed
-  is the only thing that does).
-- An assignment statement `LV = RV` always **writes** to `LV`.
-- Within the rvalue `RV`:
-  - Each lvalue operand is either a **read** or a **move** action, depending
+- A `StorageDead` statement counts as a **shallow write**.
+- An assignment statement `LV = RV` is a **shallow write** to `LV`;
+- and, within the rvalue `RV`:
+  - Each lvalue operand is either a **deep read** or a **deep write** action, depending
     on the type of the lvalue implements `Copy`.
-  - A shared borrow `&LV` counts as a **read**.
-    - XXX nested mutable calls
-  - A mutable borrow `&mut LV` counts as **both a read and a write**.
+    - Note that moves count as "deep writes".
+  - A shared borrow `&LV` counts as a **deep read**.
+  - A mutable borrow `&mut LV` counts as **deep write**.
 
-**Moving an lvalue LV**. Moving an lvalue is illegal if there is an
-**intersecting** loan. A loan is said to **intersect** an lvalue LV
-if:
+**Accessing an lvalue LV.** When accessing an lvalue LV, there are two
+axes to consider:
 
-- the loan is for the path LV;
-  - so: moving a path like `a.b.c` is illegal if `a.b.c` is borrowed
-- the loan is for some prefix of the path LV;
-  - so: moving a path like `a.b.c` is illegal if `a` or `a.b` is borrowed
-- LV is a supporting prefix of the loan path
-  - so: moving a path like `a` is illegal if `a.b` is borrowed
-  - but: moving `a` is legal if `*a` is borrowed, so long as `a` is a shared reference
+- The access can be SHALLOW or DEEP:
+  - A *shallow* access means that the immediate fields reached at LV
+    are accessed, but references or pointers found within are not
+    dereferenced. Right now, the only access that is shallow is an
+    assignment like `x = ...`, which would be a **shallow write** of
+    `x`.
+  - A *deep* access means that all data reachable through a given lvalue
+    may be invalidated or accessed by this action.
+- The access can be a READ or WRITE:
+  - A *read* means that the existing data may be read, but will not be changed.
+  - A *write* means that the data may be mutated to new values or
+    otherwise invalidated (for example, it could be de-initialized, as
+    in a move operation).
 
-**Reading an lvalue LV.** Reading an lvalue LV is legal if all
-intersecting loans in scope are shared loans. These are the same
-conditions that make a *move* illegal, except that any loan makes a
-move illegal, but a read is only illegl with a mutable loan.
+"Deep" accesses are often deep because they create and release an
+alias, in which case the "deep" qualifier reflects what might happen
+through that alias. For example, if you have `let x = &mut y`, that is
+considered a **deep write** of `y`, even though the **actual borrow**
+doesn't do anything at all, we create a mutable alias `x` that can be
+used to mutate anything reachable from `y`. A move `let x = y` is
+similar: it writes to the shallow content of `y`, but then -- via the
+new name `x` -- we can access all other content accessible through
+`y`.
 
-**Writing an lvalue LV or killing storage a variable X.** Writing an
-lvalue LV is legal and killing storage for a variable are legal under
-the same conditions. These conditions are somewhat more permissive
-than reads: the reason is that, when you write to a variable (or kill
-its storage), you prevent later accesses (unlike a read or a move). A
-write (or kill) of the path LV is illegal if:
+The pseudocode for deciding when an access is legal looks like this:
 
-- there is a loan for the path LV;
+```
+fn access_legal(lvalue, is_shallow, is_read) {
+    let relevant_borrows = select_relevant_borrows(lvalue, is_shallow);
+
+    for borrow in relevant_borrows {
+        // shared borrows like `&x` still permit reads from `x` (but not writes)
+        if is_read && borrow.is_read { continue; }
+        
+        // otherwise, report an error, because we have an access
+        // that conflicts with an in-scope borrow
+        report_error();
+    }
+}
+```
+
+As you can see, it works in two steps. First, we enumerate a set of
+in-scope borrows that are relevant to `lvalue` -- this set is affected
+by whether this is a "shallow" or "deep" action, as will be described
+shortly. Then, for each such borrow, we check if it conflicts with the
+action (i.e.,, if at least one of them is potentially writing), and,
+if so, we report an error.
+
+For **shallow** accesses to the path `lvalue`, we consider borrows relevant
+if they meet one of the following criteria:
+
+- there is a loan for the path `lvalue`;
   - so: writing a path like `a.b.c` is illegal if `a.b.c` is borrowed
-- there is a loan for some prefix of the path LV;
+- there is a loan for some prefix of the path `lvalue`;
   - so: writing a path like `a.b.c` is illegal if `a` or `a.b` is borrowed
-- LV is a **freezing prefix** of the loan path
+- `lvalue` is a **freezing prefix** of the loan path
   - freezing prefixes are found by stripping away fields, but stop at
     any dereference
   - so: writing a path like `a` is illegal if `a.b` is borrowed
   - but: writing `a` is legal if `*a` is borrowed, whether or not `a`
     is a shared or mutable reference
+
+For **deep** accesses to the path `lvalue`, we consider borrows relevant
+if they meet one of the following criteria:
+
+- there is a loan for the path `lvalue`;
+  - so: reading a path like `a.b.c` is illegal if `a.b.c` is mutably borrowed
+- there is a loan for some prefix of the path `lvalue`;
+  - so: reading a path like `a.b.c` is illegal if `a` or `a.b` is mutably borrowed
+- `lvalue` is a **supporting prefix** of the loan path
+  - supporting prefixes were defined earlier
+  - so: reading a path like `a` is illegal if `a.b` is mutably
+    borrowed, but -- in contrast with shallow accesses -- reading `a` is also
+    illegal if `*a` is mutably borrowed
+    
+**Dropping an lvalue LV.** Dropping an lvalue can be treated as a DEEP
+WRITE, like a move, but this is overly conservative. The rules here
+are under active development, see
+[#40](https://github.com/nikomatsakis/nll-rfc/issues/40).
 
 # How We Teach This
 [how-we-teach-this]: #how-we-teach-this
