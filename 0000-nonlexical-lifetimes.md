@@ -1611,10 +1611,8 @@ straightforward:
   
 There are a few interesting cases to keep in mind:
 
-- MIR models discriminants more precisely. They should probably be
-  thought of as a distinct *field* when it comes to borrows (although
-  it may be equivalent to treat a load of the discriminant as a kind
-  of shallow read).
+- MIR models discriminants more precisely. They should be
+  thought of as a distinct *field* when it comes to borrows.
 - In the compiler today, `Box` is still "built-in" to MIR. This RFC
   ignores that possibility and instead acts as though borrowed
   references (`&` and `&mut`) and raw pointers (`*const` and `*mut`)
