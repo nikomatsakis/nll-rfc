@@ -1678,8 +1678,8 @@ if they meet one of the following criteria:
   - so: writing a path like `a.b.c` is illegal if `a.b.c` is borrowed
 - there is a loan for some prefix of the path `lvalue`;
   - so: writing a path like `a.b.c` is illegal if `a` or `a.b` is borrowed
-- `lvalue` is a **freezing prefix** of the loan path
-  - freezing prefixes are found by stripping away fields, but stop at
+- `lvalue` is a **shallow prefix** of the loan path
+  - shallow prefixes are found by stripping away fields, but stop at
     any dereference
   - so: writing a path like `a` is illegal if `a.b` is borrowed
   - but: writing `a` is legal if `*a` is borrowed, whether or not `a`
