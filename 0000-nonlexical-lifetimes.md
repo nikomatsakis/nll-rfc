@@ -1499,7 +1499,9 @@ operationally, `'b` only outlives `'a` if it also includes the
 end-regions that `'a` includes, presuming that the end point of the
 CFG is reachable from P). The reason that we require the end point of
 the CFG to be reachable is because otherwise the data never escapes
-the current function, and hence the named lifetimes are not relevant.
+the current function, and hence `end('r)` is not reachable (since
+`end('r)` only covers the code in callers that executes *after* the
+return).
 
 NB: This part of the prototype is partially
 implemented. [Issue #12](https://github.com/nikomatsakis/nll/issues/12)
