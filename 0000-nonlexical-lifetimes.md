@@ -1457,68 +1457,55 @@ The key to this example is that the first borrow of `map`, with the
 lifetime `'m1`, must extend to the end of the `'r`, but only if we
 branch to SOME. Otherwise, it should end once we enter the NONE block.
 
-To accommodate cases like this, we will extend the control-flow graph
-with additional nodes representing the **end-points** of each named
-lifetime (in other words, representing spans of time in the
-caller(s)). So, we can amend the control-flow graph above to something
-like this:
+To accommodate cases like this, we will extend the notion of a region
+so that it includes not only points in the control-flow graph, but
+also includes a (possibly empty) set of "end regions" for various
+named lifetimes.  We denote these as `end('r)` for some named region
+`'r`. The region `end('r)` can be understood semantically as referring
+to some portion of the caller's control-flow graph (actually, they
+could extend beyond the end of the caller, into the caller's caller,
+and so forth, but that doesn't concern us). This new region might then
+be denoted as the following (in pseudocode form):
 
-```
-// ... same as before up until the END block:
-
-block END {
-  goto END_R;
-}
-
-block END_R { // end of the `'r` lifetime
-  goto STATIC_R;
-}
-
-block STATIC_R { // end of the `'static` lifetime
+```rust
+struct Region {
+  points: Set<Point>,
+  end_regions: Set<NamedLifetime>,
 }
 ```
 
-The idea here is that these new blocks, `END_R` and `STATIC_R`,
-represent the points in the caller (or caller's caller, etc) where
-each of the named lifetime parameters will end. The edges between them
-represent the outlives relationships that we know of (so `END_R ->
-STATIC_R` because `'static` outlives `'r`). Now we can represent the
-lifetime `'m1` as the set `{START/1, START/2, SOME/0, SOME/1, END/0,
-END_R/0}` -- note that it includes the point `END_R/0`, which means
-that it must be valid up until the end of `'r`. However, it does *not*
-include the path `NONE/0`, even though `NONE/0` can reach `END_R/0`;
-this is another instance of the ability for lifetimes to contain
-"gaps". The lifetime `'m2`, covering the second borrow, will be
-inferred to `{NONE/2, NONE/3, NONE/4, END/0, END_R/0}`.
+In this case, when a type mentions a named lifetime, such as `'r`, that
+can be represented by a region that includes:
 
-In general, we need to insert pessimistic edges between named
-lifetimes.  Put another way, for any two named lifetimes `'a` and
-`'b`, there should be edges between their corresponding end points
-`END_A` and `END_B` unless we know that `'a: 'b` or vice versa, in
-which case edges in only one direction are needed.  This models the
-possibility that *either* `'a` or `'b` could end first.
+- the entire CFG,
+- and, the end region for that named lifetime (`end('r)`).
 
-(Note that the CFGs we will build, like all CFGs, overapproximates the
-possible control-flows: it permits either `'a` or `'b` to
-end first, but since one could traverse over the cycles, it would also
-permit `'a` to "end" multiple times and so forth. This should be ok --
-the analysis cares only about that we include all possible paths; it
-is also permitted to include other paths that will never *actually*
-occur in practice.)
+Furthermore, we can **elaborate** the set to include `end('x)` for
+every named lifetime `'x` such that `'r: 'x`. This is because, if `'r:
+'x`, then we know that `'r` doesn't end up until `'x` has already
+ended.
 
-Once we have extended the CFG, we can map every reference to a
-named region like `'a` as being the set of nodes that begins with
-START and includes the end point of `'a`, but excludes the end points
-of every other region `'x`, unless `'a: 'x` is known to hold. So, in
-our example above, we would map references to `'r` to be the set
-`{START/*, SOME/*, NONE/*, END/*, END_R/0}`; this set does not include
-`STATIC/0` since `'r: 'static` is not known to hold. References to
-`'static` would include all the points in the control-flow
-graph.
+Finally, we must adjust our definition of subtyping to accommodate
+this amended definition of a region, which we do as follows. When we have
+an outlives relation 
 
-NB: As of this writing, this part of the prototype is not fully
-implemented. [Issue #12](https://github.com/nikomatsakis/nll/issues/12) describes
-the current status.
+    'b: 'a @ P
+    
+where the end point of the CFG is reachable from P without leaving
+`'a`, the existing inference algorithm would simply add the end-point
+to `'b` and stop. The new algorithm would also add any end regions
+that are included `'a` to `'b` at that time. (Expressing less
+operationally, `'b` only outlives `'a` if it also includes the
+end-regions that `'a` includes, presuming that the end point of the
+CFG is reachable from P). The reason that we require the end point of
+the CFG to be reachable is because otherwise the data never escapes
+the current function, and hence `end('r)` is not reachable (since
+`end('r)` only covers the code in callers that executes *after* the
+return).
+
+NB: This part of the prototype is partially
+implemented. [Issue #12](https://github.com/nikomatsakis/nll/issues/12)
+describes the current status and links to the in-progress PRs.
 
 ## Layer 5: How the borrow check works
 
@@ -1602,12 +1589,10 @@ section.
 At this point, we have computed which loans are in scope at each
 point. Next, we traverse the MIR and identify actions that are illegal
 given the loans in scope. Rather than go through every kind of MIR statement,
-we can break things down into four kinds of actions that can be performed:
+we can break things down into two kinds of actions that can be performed:
 
-- Moving an lvalue
-- Reading an lvalue
-- Writing an lvalue
-- Killing the storage for a local variable (i.e., `StorageDead`)
+- Accessing an lvalue, which we categorize along two axes (shallow vs deep, read vs write)
+- Dropping an lvalue
 
 For each of these kinds of actions, we will specify below the rules
 that determine when they are legal, given the set of loans L in scope
@@ -1617,51 +1602,108 @@ checking, given the in-scope loans, whether the actions it performs
 are legal. Translating MIR statements into actions is mostly
 straightforward:
 
-- A drop statement counts as a **move**.
-- A `StorageDead` statement counts as **killing the storage** (and indeed
-  is the only thing that does).
-- An assignment statement `LV = RV` always **writes** to `LV`.
-- Within the rvalue `RV`:
-  - Each lvalue operand is either a **read** or a **move** action, depending
+- A `StorageDead` statement counts as a **shallow write**.
+- An assignment statement `LV = RV` is a **shallow write** to `LV`;
+- and, within the rvalue `RV`:
+  - Each lvalue operand is either a **deep read** or a **deep write** action, depending
     on the type of the lvalue implements `Copy`.
-  - A shared borrow `&LV` counts as a **read**.
-    - XXX nested mutable calls
-  - A mutable borrow `&mut LV` counts as **both a read and a write**.
+    - Note that moves count as "deep writes".
+  - A shared borrow `&LV` counts as a **deep read**.
+  - A mutable borrow `&mut LV` counts as **deep write**.
+  
+There are a few interesting cases to keep in mind:
 
-**Moving an lvalue LV**. Moving an lvalue is illegal if there is an
-**intersecting** loan. A loan is said to **intersect** an lvalue LV
-if:
+- MIR models discriminants more precisely. They should be
+  thought of as a distinct *field* when it comes to borrows.
+- In the compiler today, `Box` is still "built-in" to MIR. This RFC
+  ignores that possibility and instead acts as though borrowed
+  references (`&` and `&mut`) and raw pointers (`*const` and `*mut`)
+  were the only sorts of pointers.  It should be straight-forward to
+  extend the text here to cover `Box`, though some questions arise
+  around the handling of drop (see the section on drops for details).
 
-- the loan is for the path LV;
-  - so: moving a path like `a.b.c` is illegal if `a.b.c` is borrowed
-- the loan is for some prefix of the path LV;
-  - so: moving a path like `a.b.c` is illegal if `a` or `a.b` is borrowed
-- LV is a supporting prefix of the loan path
-  - so: moving a path like `a` is illegal if `a.b` is borrowed
-  - but: moving `a` is legal if `*a` is borrowed, so long as `a` is a shared reference
+**Accessing an lvalue LV.** When accessing an lvalue LV, there are two
+axes to consider:
 
-**Reading an lvalue LV.** Reading an lvalue LV is legal if all
-intersecting loans in scope are shared loans. These are the same
-conditions that make a *move* illegal, except that any loan makes a
-move illegal, but a read is only illegl with a mutable loan.
+- The access can be SHALLOW or DEEP:
+  - A *shallow* access means that the immediate fields reached at LV
+    are accessed, but references or pointers found within are not
+    dereferenced. Right now, the only access that is shallow is an
+    assignment like `x = ...`, which would be a **shallow write** of
+    `x`.
+  - A *deep* access means that all data reachable through a given lvalue
+    may be invalidated or accessed by this action.
+- The access can be a READ or WRITE:
+  - A *read* means that the existing data may be read, but will not be changed.
+  - A *write* means that the data may be mutated to new values or
+    otherwise invalidated (for example, it could be de-initialized, as
+    in a move operation).
 
-**Writing an lvalue LV or killing storage a variable X.** Writing an
-lvalue LV is legal and killing storage for a variable are legal under
-the same conditions. These conditions are somewhat more permissive
-than reads: the reason is that, when you write to a variable (or kill
-its storage), you prevent later accesses (unlike a read or a move). A
-write (or kill) of the path LV is illegal if:
+"Deep" accesses are often deep because they create and release an
+alias, in which case the "deep" qualifier reflects what might happen
+through that alias. For example, if you have `let x = &mut y`, that is
+considered a **deep write** of `y`, even though the **actual borrow**
+doesn't do anything at all, we create a mutable alias `x` that can be
+used to mutate anything reachable from `y`. A move `let x = y` is
+similar: it writes to the shallow content of `y`, but then -- via the
+new name `x` -- we can access all other content accessible through
+`y`.
 
-- there is a loan for the path LV;
+The pseudocode for deciding when an access is legal looks like this:
+
+```
+fn access_legal(lvalue, is_shallow, is_read) {
+    let relevant_borrows = select_relevant_borrows(lvalue, is_shallow);
+
+    for borrow in relevant_borrows {
+        // shared borrows like `&x` still permit reads from `x` (but not writes)
+        if is_read && borrow.is_read { continue; }
+        
+        // otherwise, report an error, because we have an access
+        // that conflicts with an in-scope borrow
+        report_error();
+    }
+}
+```
+
+As you can see, it works in two steps. First, we enumerate a set of
+in-scope borrows that are relevant to `lvalue` -- this set is affected
+by whether this is a "shallow" or "deep" action, as will be described
+shortly. Then, for each such borrow, we check if it conflicts with the
+action (i.e.,, if at least one of them is potentially writing), and,
+if so, we report an error.
+
+For **shallow** accesses to the path `lvalue`, we consider borrows relevant
+if they meet one of the following criteria:
+
+- there is a loan for the path `lvalue`;
   - so: writing a path like `a.b.c` is illegal if `a.b.c` is borrowed
-- there is a loan for some prefix of the path LV;
+- there is a loan for some prefix of the path `lvalue`;
   - so: writing a path like `a.b.c` is illegal if `a` or `a.b` is borrowed
-- LV is a **freezing prefix** of the loan path
-  - freezing prefixes are found by stripping away fields, but stop at
+- `lvalue` is a **shallow prefix** of the loan path
+  - shallow prefixes are found by stripping away fields, but stop at
     any dereference
   - so: writing a path like `a` is illegal if `a.b` is borrowed
   - but: writing `a` is legal if `*a` is borrowed, whether or not `a`
     is a shared or mutable reference
+
+For **deep** accesses to the path `lvalue`, we consider borrows relevant
+if they meet one of the following criteria:
+
+- there is a loan for the path `lvalue`;
+  - so: reading a path like `a.b.c` is illegal if `a.b.c` is mutably borrowed
+- there is a loan for some prefix of the path `lvalue`;
+  - so: reading a path like `a.b.c` is illegal if `a` or `a.b` is mutably borrowed
+- `lvalue` is a **supporting prefix** of the loan path
+  - supporting prefixes were defined earlier
+  - so: reading a path like `a` is illegal if `a.b` is mutably
+    borrowed, but -- in contrast with shallow accesses -- reading `a` is also
+    illegal if `*a` is mutably borrowed
+    
+**Dropping an lvalue LV.** Dropping an lvalue can be treated as a DEEP
+WRITE, like a move, but this is overly conservative. The rules here
+are under active development, see
+[#40](https://github.com/nikomatsakis/nll-rfc/issues/40).
 
 # How We Teach This
 [how-we-teach-this]: #how-we-teach-this
@@ -1797,6 +1839,38 @@ borrow is never used again.)
 
 There are some cases where the three points are not all visible
 in the user syntax where we may need some careful treatment.
+
+### Drop as last use
+
+There are times when the last use of a variable will in fact be its
+destructor. Consider an example like this:
+
+```rust
+struct Foo<'a> { field: &'a u32 }
+impl<'a> Drop for Foo<'a> { .. }
+
+fn main() {
+    let mut x = 22;
+    let y = Foo { field: &x };
+    x += 1;
+}
+```
+
+This code would be legal, but for the destructor on `y`, which will
+implicitly execute at the end of the enclosing scope. The error
+message might be shown as follows:
+
+```
+error[E0506]: cannot write to `x` while borrowed
+ --> <anon>:4:5
+   |
+ 6 |     let y = Foo { field: &x };
+   |                          -- borrow of `x` occurs here
+ 7 |     x += 1;
+   |     ^ write to `x` occurs here, while borrow is still active
+ 8 | }
+   | - borrow is later used here, when `y` is dropped
+```
 
 ### Method calls
 
