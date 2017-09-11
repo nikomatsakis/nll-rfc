@@ -12,7 +12,7 @@ than lexical scopes. The RFC describes in detail how to infer these
 new, more flexible regions, and also describes how to adjust our error
 messages. The RFC also describes a few other extensions to the borrow
 checker, the total effect of which is to eliminate many common cases
-where small, function-local requires would be required to pass the
+where small, function-local code modifications would be required to pass the
 borrow check. (The appendix describes some of the remaining
 borrow-checker limitations that are not addressed by this RFC.)
 
@@ -201,7 +201,7 @@ in the previous example.
 ## Problem case #3: conditional control flow across functions
 
 While we were able to work around problem case #2 in a relatively
-simple, if irritating, fashion. there are other variations of
+simple, if irritating, fashion, there are other variations of
 conditional control flow that cannot be so easily resolved. This is
 particularly true when you are returning a reference out of a
 function. Consider the following function, which returns the value for
@@ -224,7 +224,7 @@ fn get_default<'r,K,V:Default>(map: &'r mut HashMap<K,V>,
 }                                          // v
 ```
 
-At first glance, this code appears quite similar the code we saw
+At first glance, this code appears quite similar to the code we saw
 before, and indeed, just as before, it will not compile. In fact,
 the lifetimes at play are quite different. The reason is that, in the
 `Some` branch, the value is being **returned out** to the caller.
@@ -278,7 +278,7 @@ scope when we attempt to call `insert` after the match.
 
 The workaround for this problem is a bit more involved. It relies on
 the fact that the borrow checker uses the precise control-flow of the
-function to determine what borrows are in scope.
+function to determine which borrows are in scope.
 
 ```rust
 fn get_default2<'r,K,V:Default>(map: &'r mut HashMap<K,V>,
@@ -599,7 +599,7 @@ are valid on entry to P. Lifetimes appear in various places in the MIR
 representation:
 
 - The types of variables (and temporaries, etc) may contain lifetimes.
-- Every borrow expression has a desigated lifetime.
+- Every borrow expression has a designated lifetime.
 
 We can extend our example 4 to include explicit lifetime names. There
 are three lifetimes that result. We will call them `'p`, `'foo`, and
@@ -716,7 +716,7 @@ to compute liveness for **lifetimes**. We can extend a variable-based
 analysis to lifetimes by saying that a lifetime L is live at a point P
 if there is some variable `p` which is live at P, and L appears in the
 type of `p`. (Later on, when we cover the dropck, we will use a more
-selection notion of liveness for lifetimes in which *some* of the
+selective notion of liveness for lifetimes in which *some* of the
 lifetimes in a variable's type may be live while others are not.) So,
 in our running example, the lifetime `'p` would be live at precisely
 the same points that `p` is live. The lifetimes `'foo` and `'bar` are
@@ -747,7 +747,7 @@ liveness constraints:
 ### Subtyping
 
 Whenever references are copied from one location to another, the Rust
-subtyping rules requires that the lifetime of the source reference
+subtyping rules require that the lifetime of the source reference
 **outlives** the lifetime of the target location. As discussed
 earlier, in this RFC, we extend the notion of subtyping to be
 **location-aware**, meaning that we take into account the point where
@@ -794,7 +794,7 @@ These can be converted into the following lifetime constraints:
 ### Reborrow constraints
 
 There is one final source of constraints. It frequently happens that we
-have a borrow expression that is "reborrowing" the referent of an
+have a borrow expression that "reborrows" the referent of an
 existing reference:
 
     let x: &'x i32 = ...;
@@ -1017,7 +1017,7 @@ through an alias (or move):
     ...
     use(R2); // point Q
 
-In this case, the liveness rules along do not suffice. The problem is
+In this case, the liveness rules alone do not suffice. The problem is
 that the `R2 = R` assignment may well be the last use of R, and so the
 **variable** R is dead at this point. However, the *value* in R will
 still be dereferenced later (through R2), and hence we want the
@@ -1266,7 +1266,7 @@ The solution is:
     'foo = {START/2, B/0}
 
 What makes this example interesting is that **the lifetime `'vec` must
-include both halves of the `if`** -- because it is used after the `if`
+include both halves of the `if`** -- because it is used in both branches
 -- but `'vec` only becomes "entangled" with the lifetime `'p` on one
 path. Thus even though `'vec` has to outlive `'p`, `'p` never winds up
 including the "else" branch thanks to location-aware subtyping.
@@ -1285,7 +1285,7 @@ exit node (the success of the RETURN and RESUME nodes) that
 postdominates all other nodes in the graph.
 
 If we did not add such edges, the result would also allow a number of surprising
-program to type-check. For example, it would be possible to borrow local variables
+programs to type-check. For example, it would be possible to borrow local variables
 with `'static` lifetime, so long as the function never returned:
 
 ```rust
@@ -1300,7 +1300,7 @@ This would work because (as covered in detail under the borrow check
 section) the `StorageDead(x)` instruction would never be reachable,
 and hence any lifetime of borrow would be acceptable. This further leads to
 other surprising programs that still type-check, such as this example which
-uses a (incorrect, but declared as unsafe) API for spawning threads:
+uses an (incorrect, but declared as unsafe) API for spawning threads:
 
 ```rust
 let scope = Scope::new();
@@ -1329,7 +1329,7 @@ that a destructor *may* run, since every scope may theoretically
 execute. This extends the `&mut foo` borrow given to `scope.spawn()`
 to cover the body of the loop, resulting in a borrowck error.
 
-## Layer 3: Accomodating dropck
+## Layer 3: Accommodating dropck
 
 MIR includes an action that corresponds to "dropping" a variable:
 
@@ -1363,7 +1363,7 @@ More generally, RFC 1327 defined specific rules for which lifetimes in
 a type may dangle during drop and which may not. We integrate those
 rules into our liveness analysis as follows: the MIR instruction
 `DROP(variable)` is not treated like other MIR instructions when it
-comes to liveness. In a sense, conceptually we run two distinct liveness analysis (in practice, the prototype
+comes to liveness. In a sense, conceptually we run two distinct liveness analyses (in practice, the prototype
 uses two bits per variable):
 
 1. The first, which we've already seen, indicates when a variable's
@@ -1494,7 +1494,7 @@ an outlives relation
 where the end point of the CFG is reachable from P without leaving
 `'a`, the existing inference algorithm would simply add the end-point
 to `'b` and stop. The new algorithm would also add any end regions
-that are included `'a` to `'b` at that time. (Expressing less
+that are included in `'a` to `'b` at that time. (Expressed less
 operationally, `'b` only outlives `'a` if it also includes the
 end-regions that `'a` includes, presuming that the end point of the
 CFG is reachable from P). The reason that we require the end point of
@@ -1531,7 +1531,7 @@ original program.
 
 ### Borrow checker phase 1: computing loans in scope
 
-The first phase of the borrow checker is computing, at each point in
+The first phase of the borrow checker computes, at each point in
 the CFG, the set of in-scope **loans**. A "loan" is represented as a tuple
 `('a, shared|uniq|mut, lvalue)` indicating:
 
@@ -1553,7 +1553,7 @@ For a statement at point P in the graph, we define the "transfer
 function" -- that is, which loans it brings into or out of scope -- as
 follows:
 
-- any loans whose region cannot include P are killed;
+- any loans whose region does not include P are killed;
 - if this is a borrow statement, the corresponding loan is generated;
 - if this is an assignment `lv = <rvalue>`, then any loan for some path P
   of which `lv` is a prefix is killed.
@@ -1606,7 +1606,7 @@ straightforward:
 - An assignment statement `LV = RV` is a **shallow write** to `LV`;
 - and, within the rvalue `RV`:
   - Each lvalue operand is either a **deep read** or a **deep write** action, depending
-    on the type of the lvalue implements `Copy`.
+    on whether or not the type of the lvalue implements `Copy`.
     - Note that moves count as "deep writes".
   - A shared borrow `&LV` counts as a **deep read**.
   - A mutable borrow `&mut LV` counts as **deep write**.
