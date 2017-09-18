@@ -719,8 +719,14 @@ type of `p`. (Later on, when we cover the dropck, we will use a more
 selection notion of liveness for lifetimes in which *some* of the
 lifetimes in a variable's type may be live while others are not.) So,
 in our running example, the lifetime `'p` would be live at precisely
-the same points that `p` is live. The lifetimes `'foo` and `'bar` are
-never live, since they do not appear in the types of any variables.
+the same points that `p` is live. The lifetimes `'foo` and `'bar` have
+no points where they are (directly) live, since they do not appear in
+the types of any variables.
+
+ * However, this does not mean these lifetimes are irrelevant; as
+   shown below, subtyping constraints introduced by subsequent
+   analyses will eventually require `'foo` and `'bar` to *outlive*
+   `'p`.
 
 #### Liveness-based constraints for lifetimes
 
