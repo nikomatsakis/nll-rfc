@@ -677,8 +677,8 @@ to satisfy all constraints.
 [`regionck.rs`] is responsible for creating the constraints, and
 [`infer.rs`] is responsible for solving them.)
 
-[`regionck.rs`]: XXX
-[`infer.rs`]: XXX
+[`regionck.rs`]: https://github.com/nikomatsakis/nll/blob/master/nll/src/regionck.rs
+[`infer.rs`]: https://github.com/nikomatsakis/nll/blob/master/nll/src/infer.rs
 
 ### Liveness
 
