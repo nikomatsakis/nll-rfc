@@ -1414,7 +1414,9 @@ lifetimes that begin or end after the current function has ended. More
 subtly, we sometimes want to have lifetimes that sometimes begin and
 end in the current function, but which may (along some paths) extend
 into the caller. Consider Problem Case #3 (the corresponding test case
-in the prototype is the [get-default][] test):
+in the prototype is the [get-default] test):
+
+[get-default]: https://github.com/nikomatsakis/nll/blob/master/test/get-default.nll
 
 ```rust
 fn get_default<'r,K,V:Default>(map: &'r mut HashMap<K,V>,
