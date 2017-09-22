@@ -840,7 +840,7 @@ let m: (&mut (i32, i64), (f32, f64));
 // The path (*m.0).1 has type `i64` and supporting prefixes:
 // - (*m.0).1
 // - *m.0
-// - *m
+// - m.0
 // - m
 ```
 
