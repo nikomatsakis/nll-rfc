@@ -902,7 +902,7 @@ be fine to (for example) overwrite `r_a` with a new value, even as
 `foo` is still considered borrowed. This result falls out from our
 reborrowing rules: the supporting paths of `**r_b` is just `**r_b`.
 We do not add any more paths because this path is already a
-dereference of `*r_b`, and `*r_b` has has (shared reference) type `&'a
+dereference of `*r_b`, and `*r_b` has (shared reference) type `&'a
 i32`. Therefore, we would add one reborrow constraint: that `'a: 'c`.
 This constraint ensures that as long as `r_c` is in use, the borrow of
 `foo` remains in force, but the borrow of `r_a` (which has the
