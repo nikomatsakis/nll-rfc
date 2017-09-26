@@ -958,8 +958,8 @@ constaints, repeatedly growing the lifetimes until they are big enough
 to satisfy all constraints.
 
 The meaning of a constraint like `('a: 'b) @ P` is that, starting from
-the point P, the lifetime `'a` must include all points that are
-reachable without leaving the lifetime `'b`. The implementation
+the point P, the lifetime `'a` must include all points in `'b` that
+are reachable from the point P. The implementation
 [does a depth-first search starting from P][dfs]; the search stops if
 we exit the lifetime `'b`. Otherwise, for each point we find, we add
 it to `'a`.
