@@ -677,8 +677,8 @@ to satisfy all constraints.
 [`regionck.rs`] is responsible for creating the constraints, and
 [`infer.rs`] is responsible for solving them.)
 
-[`regionck.rs`]: XXX
-[`infer.rs`]: XXX
+[`regionck.rs`]: https://github.com/nikomatsakis/nll/blob/master/nll/src/regionck.rs
+[`infer.rs`]: https://github.com/nikomatsakis/nll/blob/master/nll/src/infer.rs
 
 ### Liveness
 
@@ -902,7 +902,7 @@ be fine to (for example) overwrite `r_a` with a new value, even as
 `foo` is still considered borrowed. This result falls out from our
 reborrowing rules: the supporting paths of `**r_b` is just `**r_b`.
 We do not add any more paths because this path is already a
-dereference of `*r_b`, and `*r_b` has has (shared reference) type `&'a
+dereference of `*r_b`, and `*r_b` has (shared reference) type `&'a
 i32`. Therefore, we would add one reborrow constraint: that `'a: 'c`.
 This constraint ensures that as long as `r_c` is in use, the borrow of
 `foo` remains in force, but the borrow of `r_a` (which has the
@@ -1414,7 +1414,9 @@ lifetimes that begin or end after the current function has ended. More
 subtly, we sometimes want to have lifetimes that sometimes begin and
 end in the current function, but which may (along some paths) extend
 into the caller. Consider Problem Case #3 (the corresponding test case
-in the prototype is the [get-default][] test):
+in the prototype is the [get-default] test):
+
+[get-default]: https://github.com/nikomatsakis/nll/blob/master/test/get-default.nll
 
 ```rust
 fn get_default<'r,K,V:Default>(map: &'r mut HashMap<K,V>,
